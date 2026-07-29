@@ -333,6 +333,41 @@ describe("processor orchestrator (seam 1)", () => {
     void controls;
   });
 
+  it("回执漏报快照内条目：异常轮失败，不删任何 inbox", async () => {
+    const { vault, lock, git, captureHead, clock } = await setup();
+    const a = await seedInbox(vault.layout, "会申报", {
+      id: "20260729-120000-acct01",
+    });
+    const b = await seedInbox(vault.layout, "被漏报", {
+      id: "20260729-120000-miss01",
+    });
+    await captureHead();
+
+    const agent = createFakeAgent(async ({ layout }) => {
+      const diary = await writeDiary(layout, "2026-07-29.md", "## only a\n");
+      return {
+        ok: true,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [{ inbox: a, status: "done", diary }],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      git,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toMatch(/未在回执交代/);
+    expect(await pathExists(path.join(vault.root, a))).toBe(true);
+    expect(await pathExists(path.join(vault.root, b))).toBe(true);
+  });
+
   it("锁已被占用：立即退出，不启动 agent", async () => {
     const { vault, git, clock } = await setup();
     const lock = createMemoryLock(true);

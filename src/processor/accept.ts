@@ -161,7 +161,7 @@ export async function acceptRound(args: {
     }
   }
 
-  // Empty success: still have pending-like snapshot items with no done/failed/quarantine
+  // 本轮快照内每条都必须在回执里交代；漏报视为异常轮（不静默成功）
   const accounted = new Set([
     ...declaredDone,
     ...declaredFailed,
@@ -170,17 +170,10 @@ export async function acceptRound(args: {
   const unaccounted = snapshotInbox
     .map(normalize)
     .filter((p) => !accounted.has(p));
-  // Only flag if agent was expected to process them — we pass the capped list as snapshot.
-  // If there are unaccounted items that still exist, it's an abnormal round.
-  if (
-    unaccounted.length > 0 &&
-    receipt.processed.length === 0 &&
-    receipt.failed.length === 0 &&
-    receipt.quarantine.length === 0
-  ) {
+  if (unaccounted.length > 0) {
     return {
       ok: false,
-      reason: "仍有待处理却无 done/failed/quarantine（异常轮）",
+      reason: `仍有待处理未在回执交代: ${unaccounted.join(", ")}`,
       unauthorizedDeletes: [],
     };
   }

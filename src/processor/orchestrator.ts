@@ -112,6 +112,12 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
         layout,
         stateBody(clock, "failed", acceptance.reason),
       );
+      // 失败也尽量把 attempts / 隔离 / STATE 提交进去，避免下轮丢计数
+      await commitWorkingTreeBestEffort(
+        git,
+        layout,
+        `processor: failed ${acceptance.reason}`.slice(0, 200),
+      );
       return {
         status: "failed",
         reason: acceptance.reason,
@@ -263,4 +269,23 @@ function buildCommitMessage(
 
 function unique(xs: string[]): string[] {
   return [...new Set(xs)];
+}
+
+async function commitWorkingTreeBestEffort(
+  git: GitOps,
+  layout: ProcessorOptions["layout"],
+  message: string,
+): Promise<void> {
+  try {
+    const changes = await git.listChanges();
+    const { isWhitelistedPath } = await import("../config.js");
+    const safe = changes.filter((c) => isWhitelistedPath(c.path, layout));
+    if (safe.length === 0) return;
+    await git.add(safe.map((c) => c.path));
+    const committed = await git.commit(message);
+    if (!committed.ok) return;
+    await git.push();
+  } catch {
+    /* 失败路径的提交是尽力而为 */
+  }
 }
