@@ -1,0 +1,23 @@
+{
+  "name": "koubo-diary",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "口播日记处理环：收件箱投递 + 编排验收 + 写回日记/想法",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "processor": "tsx src/cli/run-processor.ts",
+    "ingest": "tsx src/cli/run-ingest.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>B · 在场感 · 口播原型</title>
+    <style>
+      :root { color-scheme:dark; --bg:#0b0d11; --panel:#151920; --panel-2:#1b2029; --text:#f4f6fb; --muted:#929bab; --faint:#697180; --line:rgba(255,255,255,.1); --accent:#a8ed62; --accent-ink:#17200f; --danger:#ff9d91; }
+      html[data-theme="light"] { color-scheme:light; --bg:#f4f5f0; --panel:#fff; --panel-2:#eef1e8; --text:#1a2118; --muted:#687064; --faint:#8b9388; --line:rgba(20,34,14,.12); --accent:#6cae2b; --accent-ink:#fff; --danger:#bd493e; }
+      * { box-sizing:border-box; }
+      body { min-width:320px; min-height:100dvh; margin:0; background:var(--bg); color:var(--text); font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+      button,textarea { font:inherit; }
+      button { -webkit-tap-highlight-color:transparent; }
+      .shell { min-height:100dvh; padding:18px 16px calc(104px + env(safe-area-inset-bottom)); }
+      header { display:flex; align-items:center; justify-content:space-between; height:36px; }
+      .brand { font-size:16px; font-weight:800; letter-spacing:-.04em; }
+      .theme { width:34px; height:34px; border:1px solid var(--line); border-radius:11px; background:transparent; color:var(--muted); cursor:pointer; }
+      .presence { display:flex; align-items:end; justify-content:space-between; gap:16px; margin:48px 0 14px; }
+      .presence strong { display:block; margin-top:2px; font-size:34px; line-height:1; letter-spacing:-.08em; }
+      .presence span { color:var(--muted); font-size:12px; }
+      .capture-card { display:flex; min-height:52dvh; flex-direction:column; padding:22px; border:1px solid var(--line); border-radius:22px; background:var(--panel); }
+      textarea { width:100%; min-height:30dvh; flex:1; resize:none; border:0; outline:0; background:transparent; color:var(--text); font-size:clamp(21px,5.8vw,32px); line-height:1.5; letter-spacing:-.04em; }
+      textarea::placeholder { color:var(--faint); }
+      .history { margin-top:12px; border:1px solid var(--line); border-radius:15px; background:transparent; overflow:hidden; }
+      .history summary { padding:13px 14px; cursor:pointer; color:var(--muted); font-size:12px; }
+      .history-list { margin:0; padding:0 14px 8px; list-style:none; }
+      .history-item { padding:10px 0; border-top:1px solid var(--line); color:var(--muted); font-size:12px; line-height:1.5; }
+      .history-item time { display:block; margin-bottom:3px; color:var(--faint); font-size:10px; }
+      .empty { color:var(--faint); }
+      .submit-bar { position:fixed; z-index:5; right:0; bottom:0; left:0; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:color-mix(in srgb,var(--bg) 88%,transparent); backdrop-filter:blur(16px); }
+      .submit { display:block; width:min(100%,720px); min-height:56px; margin:auto; border:0; border-radius:16px; background:var(--accent); color:var(--accent-ink); cursor:pointer; font-size:16px; font-weight:850; }
+      .submit:disabled { cursor:not-allowed; opacity:.32; }
+      .undo { position:fixed; z-index:6; right:16px; bottom:88px; left:16px; display:flex; align-items:center; justify-content:space-between; gap:14px; width:min(calc(100% - 32px),520px); margin:auto; padding:10px 13px; border:1px solid color-mix(in srgb,var(--accent) 44%,var(--line)); border-radius:13px; background:var(--panel-2); font-size:12px; }
+      .undo button { border:0; background:transparent; color:var(--accent); cursor:pointer; font-weight:800; }
+      .hidden { display:none; }
+      .toast { position:fixed; z-index:10; top:18px; left:50%; max-width:calc(100% - 32px); padding:10px 13px; transform:translate(-50%,-12px); border:1px solid var(--line); border-radius:12px; background:var(--panel); color:var(--text); font-size:12px; opacity:0; pointer-events:none; transition:opacity .16s,transform .16s; }
+      .toast.show { transform:translate(-50%,0); opacity:1; }
+      .toast.error { color:var(--danger); }
+      .prototype-nav { position:fixed; z-index:7; right:50%; bottom:82px; display:flex; gap:3px; padding:4px; transform:translateX(50%); border:1px solid var(--line); border-radius:12px; background:color-mix(in srgb,var(--panel) 92%,transparent); box-shadow:0 8px 24px rgba(0,0,0,.2); backdrop-filter:blur(14px); }
+      .prototype-nav a { min-width:28px; padding:6px 7px; border-radius:8px; color:var(--muted); font-size:10px; text-align:center; text-decoration:none; }
+      .prototype-nav a.active { background:var(--accent); color:var(--accent-ink); font-weight:800; }
+      .prototype-tools { width:min(100%,720px); margin:22px auto 0; color:var(--muted); font-size:11px; }
+      .prototype-tools summary { cursor:pointer; color:var(--faint); }
+      .tools-body { display:grid; gap:10px; margin-top:10px; padding:12px; border:1px dashed var(--line); border-radius:12px; }
+      .tools-body label { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+      .tools-body button { width:max-content; padding:7px 9px; border:1px solid var(--line); border-radius:9px; background:transparent; color:var(--muted); cursor:pointer; font-size:11px; }
+      .tools-body pre { max-height:180px; margin:0; overflow:auto; color:var(--faint); font:10px/1.5 ui-monospace,monospace; white-space:pre-wrap; }
+      @media (min-width:700px) { .shell { width:min(100%,760px); margin:auto; padding-right:28px; padding-left:28px; } .submit-bar { padding-right:28px; padding-left:28px; } .undo { right:28px; bottom:88px; left:auto; } .prototype-nav { right:24px; bottom:24px; transform:none; } }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header><div class="brand">口播</div><button class="theme" id="theme" type="button" aria-label="切换主题">☼</button></header>
+      <main>
+        <div class="presence"><div><span>今日已投</span><strong id="count">0</strong></div><span>条</span></div>
+        <div class="capture-card"><textarea id="draft" autofocus placeholder="说就行…" aria-label="口播内容"></textarea></div>
+        <details class="history"><summary id="historySummary">查看今日已投</summary><ul class="history-list" id="historyList"></ul></details>
+      </main>
+      <details class="prototype-tools">
+        <summary>原型测试</summary>
+        <div class="tools-body">
+          <label>下次提交强制失败 <input id="forceFailure" type="checkbox" /></label>
+          <button id="clearMock" type="button">清空本地 mock</button>
+          <pre id="state"></pre>
+        </div>
+      </details>
+    </div>
+    <div class="submit-bar"><button class="submit" id="submit" type="button" disabled>送进收件箱</button></div>
+    <div class="undo hidden" id="undo"><span>已投递</span><button id="undoButton" type="button">撤销</button></div>
+    <nav class="prototype-nav" aria-label="切换原型"><a href="index.html">A</a><a class="active" href="b.html">B</a><a href="c.html">C</a></nav>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script>
+      const prefix = "prototype-capture";
+      const draft = document.querySelector("#draft");
+      const submit = document.querySelector("#submit");
+      const count = document.querySelector("#count");
+      const historySummary = document.querySelector("#historySummary");
+      const historyList = document.querySelector("#historyList");
+      const undo = document.querySelector("#undo");
+      const toast = document.querySelector("#toast");
+      const stateOutput = document.querySelector("#state");
+      const forceFailure = document.querySelector("#forceFailure");
+      let toastTimer;
+      let undoTimer;
+      const state = { draft: localStorage.getItem(`${prefix}:draft`) || "", entries: readEntries(), forceFailure: false, lastResult: "等待提交" };
+      draft.value = state.draft;
+
+      function todayKey() { return new Intl.DateTimeFormat("sv-SE").format(new Date()); }
+      function readEntries() { return JSON.parse(localStorage.getItem(`${prefix}:entries:${todayKey()}`) || "[]"); }
+      function saveEntries() { localStorage.setItem(`${prefix}:entries:${todayKey()}`, JSON.stringify(state.entries)); }
+      function escapeHtml(value) { return value.replace(/[&<>'"]/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;" })[character]); }
+      function renderHistory() {
+        count.textContent = state.entries.length;
+        historySummary.textContent = state.entries.length ? `查看今日已投 ${state.entries.length} 条` : "今天还没有口播";
+        historyList.innerHTML = state.entries.slice().reverse().map((entry) => `<li class="history-item"><time>${new Intl.DateTimeFormat("zh-CN", { hour:"2-digit", minute:"2-digit" }).format(new Date(entry.createdAt))}</time>${escapeHtml(entry.text)}</li>`).join("") || `<li class="history-item empty">送出后会显示在这里。</li>`;
+      }
+      function renderState() { stateOutput.textContent = JSON.stringify({ variant:"B · 在场感", draft:state.draft, todayEntries:state.entries.length, forceFailureNextSubmit:state.forceFailure, lastResult:state.lastResult }, null, 2); }
+      function showToast(message, error = false) { window.clearTimeout(toastTimer); toast.textContent = message; toast.classList.toggle("error", error); toast.classList.add("show"); toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2200); }
+      function sync() { state.draft = draft.value; localStorage.setItem(`${prefix}:draft`, state.draft); submit.disabled = state.draft.trim().length === 0; renderHistory(); renderState(); }
+      function send() {
+        if (!state.draft.trim()) return;
+        if (state.forceFailure) { state.forceFailure = false; forceFailure.checked = false; state.lastResult = "失败：正文保留"; showToast("暂时没送进去，正文还在", true); renderState(); draft.focus(); return; }
+        const entry = { id:crypto.randomUUID(), text:state.draft.trim(), createdAt:new Date().toISOString() };
+        state.entries.push(entry); state.lastResult = "成功：已投递并回焦"; state.draft = ""; draft.value = ""; localStorage.setItem(`${prefix}:draft`, ""); saveEntries(); showToast("已投递"); renderHistory(); sync(); draft.focus();
+        window.clearTimeout(undoTimer); undo.classList.remove("hidden"); undoTimer = window.setTimeout(() => undo.classList.add("hidden"), 5000);
+        undo.dataset.entryId = entry.id;
+      }
+      function undoLast() { const entry = state.entries.find((item) => item.id === undo.dataset.entryId); if (!entry) return; state.entries = state.entries.filter((item) => item.id !== entry.id); state.draft = entry.text; draft.value = state.draft; localStorage.setItem(`${prefix}:draft`, state.draft); saveEntries(); undo.classList.add("hidden"); state.lastResult = "已撤销：正文回填"; sync(); showToast("已撤销"); draft.focus(); }
+      draft.addEventListener("input", sync);
+      draft.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") send(); });
+      submit.addEventListener("click", send);
+      document.querySelector("#undoButton").addEventListener("click", undoLast);
+      forceFailure.addEventListener("change", (event) => { state.forceFailure = event.target.checked; renderState(); });
+      document.querySelector("#theme").addEventListener("click", () => { const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; document.documentElement.dataset.theme = theme; localStorage.setItem(`${prefix}:theme`, theme); });
+      document.querySelector("#clearMock").addEventListener("click", () => { localStorage.removeItem(`${prefix}:draft`); Object.keys(localStorage).filter((key) => key.startsWith(`${prefix}:entries:`)).forEach((key) => localStorage.removeItem(key)); state.entries = []; draft.value = ""; state.lastResult = "mock 已清空"; sync(); showToast("mock 已清空"); });
+      document.documentElement.dataset.theme = localStorage.getItem(`${prefix}:theme`) || "dark";
+      renderHistory(); sync(); draft.focus();
+    </script>
+  </body>
+</html>
