@@ -15,7 +15,7 @@
 
 密钥、GitHub remote、Claude 登录等你回来再填；在此之前请用 `npm test` 锁契约。
 
-## 开发
+## 开发与测试
 
 ```bash
 npm install
@@ -25,6 +25,12 @@ npm run typecheck
 
 环境变量见 `.env.example`（复制为 `.env`，勿提交）。
 
+| 文档 | 用途 |
+|------|------|
+| `docs/ops/local-test.md` | 本地启动、自动测、页面半集成 |
+| `docs/ops/handoff-ops.md` | 运营交接、两仓模型、上云顺序、缺口 |
+| `docs/ops/field-drill.md` | VPS 演习清单 |
+
 ## 模块
 
 - `src/processor/`：编排、机械验收、删 done、隔离、锁
@@ -32,7 +38,7 @@ npm run typecheck
 - `src/agent/claude-runner.ts`：真 Claude 非交互调用骨架
 - `skills/处理收件箱/`：agent skill（轻整理边界 + 回执 schema）
 - `capture/`：B 在场感捕捉端，接真 Ingest
-- `docs/ops/field-drill.md`：cron / 演习清单
+- `docs/ops/`：本地测 / 运营交接 / 演习
 
 ## 领域词
 
