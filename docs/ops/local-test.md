@@ -55,10 +55,12 @@ mkdir -p /tmp/koubo-practice-vault
 cd /tmp/koubo-practice-vault
 git init
 git commit --allow-empty -m "init practice vault"
-mkdir -p _inbox _inbox/_quarantine _staging _processor 日记 想法
+mkdir -p _inbox _inbox/_quarantine _staging _processor 想法
+mkdir -p "生活/日子一天天过去"
 ```
 
-Windows 可用 `D:/tmp/koubo-practice-vault` 等同路径。
+Windows 可用 `D:/tmp/koubo-practice-vault` 等同路径。  
+真实 vault 路径约定见 `docs/ops/vault-layout.md`（日记在 `生活/日子一天天过去/年/月/日`，不是顶层扁 `日记/`）。
 
 ### 3.2 写本工具仓的 `.env`（勿提交）
 
@@ -79,7 +81,7 @@ INGEST_PATH=/ingest
 WAKE_MODE=file
 WAKE_FLAG_PATH=/tmp/koubo-processor.wake
 LOCK_PATH=/tmp/koubo-processor.lock
-DIARY_DIR=日记
+DIARY_DIR=生活/日子一天天过去
 IDEAS_DIR=想法
 ```
 

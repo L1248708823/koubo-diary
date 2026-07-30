@@ -122,11 +122,11 @@ vault 根/
 
 1. VPS：Node ≥20、git、时区建议 `Asia/Shanghai`  
 2. Clone 工具仓 + vault 仓  
-3. vault 内确保存在：`_inbox/`、`_inbox/_quarantine/`、`_staging/`、`_processor/`、日记目录、想法目录  
+3. vault 布局见 `docs/ops/vault-layout.md`：建 `_inbox/`、隔离区、`_staging/`、`_processor/`、`想法/`；日记写既有树 `生活/日子一天天过去/`（勿另起平行口播日记区）  
 4. 环境变量（`EnvironmentFile=` 或 `/opt/koubo-diary/.env`）：  
    - `INGEST_TOKEN`（长随机）  
    - `VAULT_PATH`  
-   - `DIARY_DIR` / `IDEAS_DIR`  
+   - `DIARY_DIR=生活/日子一天天过去`、`IDEAS_DIR=想法`  
    - `CLAUDE_BIN` 或 `ANTHROPIC_API_KEY`  
    - `LOCK_PATH` / `WAKE_FLAG_PATH`  
 5. systemd  

@@ -5,18 +5,22 @@ import { makeInboxId } from "./vault/fs.js";
 describe("config whitelist", () => {
   const layout = defaultLayout("/vault");
 
-  it("允许收件箱、日记、想法、processor、staging", () => {
+  it("允许收件箱、日记树、想法、processor、staging", () => {
     expect(isWhitelistedPath("_inbox/a.md", layout)).toBe(true);
-    expect(isWhitelistedPath("日记/2026-07-29.md", layout)).toBe(true);
+    expect(
+      isWhitelistedPath("生活/日子一天天过去/2026/2026-07/2026-07-29.md", layout),
+    ).toBe(true);
     expect(isWhitelistedPath("想法/灵感.md", layout)).toBe(true);
     expect(isWhitelistedPath("_processor/last-run.json", layout)).toBe(true);
     expect(isWhitelistedPath("_staging/draft.md", layout)).toBe(true);
   });
 
-  it("拒绝密钥与家目录路径", () => {
+  it("拒绝密钥、旁支笔记与家目录路径", () => {
     expect(isWhitelistedPath("secrets/token.txt", layout)).toBe(false);
     expect(isWhitelistedPath(".env", layout)).toBe(false);
     expect(isWhitelistedPath("README.md", layout)).toBe(false);
+    expect(isWhitelistedPath("吾志/2021/2021-11.md", layout)).toBe(false);
+    expect(isWhitelistedPath("学习/ai/common.md", layout)).toBe(false);
   });
 });
 

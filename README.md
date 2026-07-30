@@ -29,6 +29,7 @@ npm run typecheck
 |------|------|
 | `docs/ops/local-test.md` | 本地启动、自动测、页面半集成 |
 | `docs/ops/handoff-ops.md` | 运营交接、两仓模型、上云顺序、缺口 |
+| `docs/ops/vault-layout.md` | 真实 vault 日记树 / 想法 / 收件箱约定 |
 | `docs/ops/field-drill.md` | VPS 演习清单 |
 
 ## 模块

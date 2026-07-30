@@ -5,7 +5,8 @@ export function defaultLayout(vaultPath: string): VaultLayout {
     vaultPath,
     inboxDir: "_inbox",
     quarantineDir: "_inbox/_quarantine",
-    diaryDir: "日记",
+    // 真实 vault 按日树前缀（ADR-0006）；其下为 YYYY/YYYY-MM/YYYY-MM-DD.md
+    diaryDir: "生活/日子一天天过去",
     ideasDir: "想法",
     processorDir: "_processor",
     stagingDir: "_staging",
