@@ -31,12 +31,6 @@ await writeFile(
 );
 
 const vaultExists = await exists(vaultPath);
-if (vaultExists) {
-    console.log(`本地配置已更新：${localConfigPath}`);
-    console.log("临时 vault 已存在，未覆盖现有测试现场。");
-    process.exit(0);
-}
-
 await mkdir(vaultPath, { recursive: true });
 
 const directories = [
@@ -57,5 +51,10 @@ await copyFile(
   path.join(vaultPath, ".claude/skills/处理收件箱/SKILL.md"),
 );
 
-console.log(`本地测试 vault 已创建：${vaultPath}`);
+console.log(`本地配置已更新：${localConfigPath}`);
+if (vaultExists) {
+  console.log("临时 vault 已存在，已补齐目录并同步处理收件箱 skill，保留现有测试内容。");
+} else {
+  console.log(`本地测试 vault 已创建：${vaultPath}`);
+}
 console.log("本地模式不初始化 Git；下一步：启动 pnpm local:ingest 和 pnpm local:web，再打开捕捉页面。");

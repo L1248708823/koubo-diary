@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isWhitelistedPath } from "../config.js";
+import { isIdeaPath, isWhitelistedPath } from "../config.js";
 import type {
   ChangedPath,
   Receipt,
@@ -106,7 +106,7 @@ export async function acceptRound(args: {
     if (item.status !== "done") {
       return { ok: false, reason: "processed 中存在非 done 状态", unauthorizedDeletes: [] };
     }
-    if (!item.diary) {
+    if (typeof item.diary !== "string" || !item.diary) {
       return {
         ok: false,
         reason: `done 缺 diary: ${item.inbox}`,
@@ -121,7 +121,14 @@ export async function acceptRound(args: {
         unauthorizedDeletes: [],
       };
     }
-    if (item.idea) {
+    if (item.idea !== undefined) {
+      if (!isIdeaPath(item.idea, layout)) {
+        return {
+          ok: false,
+          reason: `idea 路径必须是 ${layout.ideasDir}/文件名.md: ${item.idea}`,
+          unauthorizedDeletes: [],
+        };
+      }
       const ideaAbs = path.join(layout.vaultPath, item.idea);
       if (!(await pathExists(ideaAbs))) {
         return {
@@ -201,7 +208,14 @@ function isValidReceiptShape(r: unknown): r is Receipt {
   for (const p of obj.processed) {
     if (!p || typeof p !== "object") return false;
     const item = p as Record<string, unknown>;
-    if (typeof item.inbox !== "string" || item.status !== "done") return false;
+    if (
+      typeof item.inbox !== "string" ||
+      item.status !== "done" ||
+      typeof item.diary !== "string" ||
+      (item.idea !== undefined && typeof item.idea !== "string")
+    ) {
+      return false;
+    }
   }
   for (const p of obj.failed) {
     if (!p || typeof p !== "object") return false;

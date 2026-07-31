@@ -15,7 +15,7 @@
    - 两轴可组合，非互斥。
 5. **归档**：v1 不对想法做按年目录或到期自动搬迁；时间靠 frontmatter / 源日记链接。库膨胀后再议 `_archive` 或 status。
 
-配置上 `DIARY_DIR` 取日记树前缀（默认示例即上述路径），`IDEAS_DIR=想法`；白名单按前缀放行其子路径。
+配置上 `DIARY_DIR` 取日记树前缀（默认示例即上述路径），`IDEAS_DIR=想法`；白名单放行日记树子路径，但想法只放行 `IDEAS_DIR/文件名.md` 这一层。
 
 ## Considered Options
 

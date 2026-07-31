@@ -35,13 +35,59 @@ function normalizePrefix(dir: string): string {
   return dir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
 }
 
+export function isIdeaPath(path: string, layout: VaultLayout): boolean {
+  const normalized = normalizeRelativePath(path);
+  if (!isSafeRelativePath(normalized)) return false;
+
+  const ideasRoot = normalizeDir(layout.ideasDir);
+  const prefix = `${ideasRoot}/`;
+  if (!normalized.startsWith(prefix)) return false;
+
+  const filename = normalized.slice(prefix.length);
+  return filename.length > 0 && !filename.includes("/") && filename.endsWith(".md");
+}
+
 export function isWhitelistedPath(path: string, layout: VaultLayout): boolean {
-  const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "");
+  const normalized = normalizeRelativePath(path);
+  if (!isSafeRelativePath(normalized)) return false;
+
+  // 想法目录是顶层扁平目录；日记树下同名子目录不属于合法写回位置。
+  if (isNestedIdeaPathInDiary(normalized, layout)) return false;
+
   // exact dir match (e.g. empty dir marker) or under prefix
   const prefixes = whitelistPrefixes(layout);
   for (const prefix of prefixes) {
     const bare = prefix.slice(0, -1);
-    if (normalized === bare || normalized.startsWith(prefix)) return true;
+    if (normalized === bare) return true;
+    if (!normalized.startsWith(prefix)) continue;
+    if (bare === normalizeDir(layout.ideasDir)) {
+      return isIdeaPath(normalized, layout);
+    }
+    return true;
   }
   return false;
+}
+
+function normalizeRelativePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+}
+
+function normalizeDir(value: string): string {
+  return normalizeRelativePath(value).replace(/\/+$/, "");
+}
+
+function isSafeRelativePath(value: string): boolean {
+  if (!value || value.startsWith("/") || /^[A-Za-z]:\//.test(value)) return false;
+  return !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+}
+
+function isNestedIdeaPathInDiary(value: string, layout: VaultLayout): boolean {
+  const diaryPrefix = `${normalizeDir(layout.diaryDir)}/`;
+  if (!value.startsWith(diaryPrefix)) return false;
+
+  const diarySegments = value.slice(diaryPrefix.length).split("/");
+  const ideaSegments = normalizeDir(layout.ideasDir).split("/");
+  return diarySegments.some((_, index) =>
+    ideaSegments.every((segment, offset) => diarySegments[index + offset] === segment),
+  );
 }
