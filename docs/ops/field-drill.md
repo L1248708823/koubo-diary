@@ -11,7 +11,7 @@
    - `AGENT_PROVIDER=codex` 或 `AGENT_PROVIDER=claude`
    - 对应 CLI：`CODEX_BIN` / `CLAUDE_BIN`，以及该 CLI 的本机登录或凭证
    - `LOCK_PATH`、`WAKE_FLAG_PATH`（宿主机路径，**不进 git**）
-3. 确认日记/想法目录名与真实 vault 一致（`DIARY_DIR` / `IDEAS_DIR`）
+3. 确认日记、想法和研究目录名与真实 vault 一致（`DIARY_DIR` / `IDEAS_DIR` / `RESEARCH_DIR`）
 4. 捕捉端（`capture/index.html`）设置里填 Ingest URL 与同一 token（只存在设备 localStorage）
 
 ## 进程

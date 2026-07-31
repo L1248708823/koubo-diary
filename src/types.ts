@@ -60,6 +60,7 @@ export type VaultLayout = {
   quarantineDir: string;
   diaryDir: string;
   ideasDir: string;
+  researchDir: string;
   processorDir: string;
   stagingDir: string;
 };

@@ -51,6 +51,7 @@ export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
   const inbox = ctx.layout.inboxDir;
   const diary = ctx.layout.diaryDir;
   const ideas = ctx.layout.ideasDir;
+  const research = ctx.layout.researchDir;
   const processor = ctx.layout.processorDir;
   const staging = ctx.layout.stagingDir;
   return [
@@ -63,10 +64,11 @@ export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
     `- 日记前缀：${diary}/  → 文件 ${diary}/YYYY/YYYY-MM/YYYY-MM-DD.md`,
     `- 想法路径：${ideas}/短标题.md，文件必须直接位于该目录（一条一文件；v1 不归档）`,
     `- 日记树下的 ${ideas}/ 子目录不是想法目录，禁止在那里创建想法文件`,
+    `- 研究目录：${research}/，研究简报由独立研究任务写入；当前处理环只记录 needs_research`,
     `- 收件箱：${inbox}/；状态与回执：${processor}/；同轮草稿：${staging}/`,
     "",
     "硬性约束：",
-    `1. 只改白名单路径：${inbox}（勿删文件）、${staging}、${processor}、${diary}、${ideas}。`,
+    `1. 只改白名单路径：${inbox}（勿删文件）、${staging}、${processor}、${diary}、${ideas}、${research}。`,
     "2. 不要执行 git commit / push / config。",
     `3. 不要删除 ${inbox} 下的文件；只在回执里声明 done/failed/quarantine。`,
     "4. 写回以日记为轴；可选想法并互链（日记=钩子+链接，想法=全文）；待查只打标。",

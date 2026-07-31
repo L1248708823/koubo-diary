@@ -38,7 +38,8 @@ const directories = [
   "_inbox/_quarantine",
   "_staging",
   "_processor",
-  "想法",
+  "Yan帳/想法",
+  "Yan帳/研究",
   "生活/日子一天天过去",
   ".claude/skills/处理收件箱",
 ];

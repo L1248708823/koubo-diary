@@ -180,6 +180,8 @@ export async function createFakeVaultAccess(layout: VaultLayout): Promise<{
           p === layout.diaryDir ||
           p.startsWith(layout.ideasDir + "/") ||
           p === layout.ideasDir ||
+          p.startsWith(layout.researchDir + "/") ||
+          p === layout.researchDir ||
           p.startsWith(layout.processorDir + "/") ||
           p === layout.processorDir ||
           p.startsWith(layout.stagingDir + "/") ||

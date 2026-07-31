@@ -7,7 +7,8 @@ export function defaultLayout(vaultPath: string): VaultLayout {
     quarantineDir: "_inbox/_quarantine",
     // 真实 vault 按日树前缀（ADR-0006）；其下为 YYYY/YYYY-MM/YYYY-MM-DD.md
     diaryDir: "生活/日子一天天过去",
-    ideasDir: "想法",
+    ideasDir: "Yan帳/想法",
+    researchDir: "Yan帳/研究",
     processorDir: "_processor",
     stagingDir: "_staging",
   };
@@ -28,6 +29,7 @@ export function whitelistPrefixes(layout: VaultLayout): string[] {
     normalizePrefix(layout.processorDir),
     normalizePrefix(layout.diaryDir),
     normalizePrefix(layout.ideasDir),
+    normalizePrefix(layout.researchDir),
   ];
 }
 
@@ -36,15 +38,11 @@ function normalizePrefix(dir: string): string {
 }
 
 export function isIdeaPath(path: string, layout: VaultLayout): boolean {
-  const normalized = normalizeRelativePath(path);
-  if (!isSafeRelativePath(normalized)) return false;
+  return isFlatMarkdownPath(path, layout.ideasDir);
+}
 
-  const ideasRoot = normalizeDir(layout.ideasDir);
-  const prefix = `${ideasRoot}/`;
-  if (!normalized.startsWith(prefix)) return false;
-
-  const filename = normalized.slice(prefix.length);
-  return filename.length > 0 && !filename.includes("/") && filename.endsWith(".md");
+export function isResearchPath(path: string, layout: VaultLayout): boolean {
+  return isFlatMarkdownPath(path, layout.researchDir);
 }
 
 export function isDiaryPath(path: string, layout: VaultLayout): boolean {
@@ -71,10 +69,18 @@ export function isWhitelistedPath(path: string, layout: VaultLayout): boolean {
   const prefixes = whitelistPrefixes(layout);
   for (const prefix of prefixes) {
     const bare = prefix.slice(0, -1);
-    if (normalized === bare) return bare !== normalizeDir(layout.ideasDir);
+    if (normalized === bare) {
+      return (
+        bare !== normalizeDir(layout.ideasDir) &&
+        bare !== normalizeDir(layout.researchDir)
+      );
+    }
     if (!normalized.startsWith(prefix)) continue;
     if (bare === normalizeDir(layout.ideasDir)) {
       return isIdeaPath(normalized, layout);
+    }
+    if (bare === normalizeDir(layout.researchDir)) {
+      return isResearchPath(normalized, layout);
     }
     return true;
   }
@@ -87,6 +93,17 @@ function normalizeRelativePath(value: string): string {
 
 function normalizeDir(value: string): string {
   return normalizeRelativePath(value).replace(/\/+$/, "");
+}
+
+function isFlatMarkdownPath(path: string, root: string): boolean {
+  const normalized = normalizeRelativePath(path);
+  if (!isSafeRelativePath(normalized)) return false;
+
+  const prefix = `${normalizeDir(root)}/`;
+  if (!normalized.startsWith(prefix)) return false;
+
+  const filename = normalized.slice(prefix.length);
+  return filename.length > 0 && !filename.includes("/") && filename.endsWith(".md");
 }
 
 function isSafeRelativePath(value: string): boolean {

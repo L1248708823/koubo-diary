@@ -21,7 +21,7 @@ describe("processor acceptance", () => {
 
     const inbox = await seedInbox(vault.layout, "测试嵌套想法路径");
     const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
-    const nestedIdea = `${vault.layout.diaryDir}/2026/2026-07/想法/嵌套.md`;
+    const nestedIdea = `${vault.layout.diaryDir}/2026/2026-07/Yan帳/想法/嵌套.md`;
     await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
     await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
     await mkdir(path.dirname(path.join(vault.root, nestedIdea)), { recursive: true });
@@ -101,13 +101,13 @@ describe("processor acceptance", () => {
           inbox: firstInbox,
           status: "done",
           diary,
-          idea: "想法/共享.md",
+          idea: "Yan帳/想法/共享.md",
         },
         {
           inbox: secondInbox,
           status: "done",
           diary,
-          idea: "想法/共享.md",
+          idea: "Yan帳/想法/共享.md",
         },
       ],
       failed: [],

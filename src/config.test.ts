@@ -3,6 +3,7 @@ import {
   defaultLayout,
   isDiaryPath,
   isIdeaPath,
+  isResearchPath,
   isWhitelistedPath,
 } from "./config.js";
 import { makeInboxId } from "./vault/fs.js";
@@ -18,8 +19,10 @@ describe("config whitelist", () => {
     expect(
       isDiaryPath("生活/日子一天天过去/2026/2026-07/2026-07-29.md", layout),
     ).toBe(true);
-    expect(isWhitelistedPath("想法/灵感.md", layout)).toBe(true);
-    expect(isIdeaPath("想法/灵感.md", layout)).toBe(true);
+    expect(isWhitelistedPath("Yan帳/想法/灵感.md", layout)).toBe(true);
+    expect(isIdeaPath("Yan帳/想法/灵感.md", layout)).toBe(true);
+    expect(isWhitelistedPath("Yan帳/研究/简报.md", layout)).toBe(true);
+    expect(isResearchPath("Yan帳/研究/简报.md", layout)).toBe(true);
     expect(isWhitelistedPath("_processor/last-run.json", layout)).toBe(true);
     expect(isWhitelistedPath("_staging/draft.md", layout)).toBe(true);
   });
@@ -30,16 +33,16 @@ describe("config whitelist", () => {
     expect(isWhitelistedPath("README.md", layout)).toBe(false);
     expect(isWhitelistedPath("吾志/2021/2021-11.md", layout)).toBe(false);
     expect(isWhitelistedPath("学习/ai/common.md", layout)).toBe(false);
-    expect(isWhitelistedPath("想法", layout)).toBe(false);
+    expect(isWhitelistedPath("Yan帳/想法", layout)).toBe(false);
     expect(isDiaryPath("README.md", layout)).toBe(false);
     expect(
       isDiaryPath("生活/日子一天天过去/随便.md", layout),
     ).toBe(false);
-    expect(isIdeaPath("想法/主题/细节.md", layout)).toBe(false);
-    expect(isWhitelistedPath("想法/主题/细节.md", layout)).toBe(false);
+    expect(isIdeaPath("Yan帳/想法/主题/细节.md", layout)).toBe(false);
+    expect(isWhitelistedPath("Yan帳/想法/主题/细节.md", layout)).toBe(false);
     expect(
       isWhitelistedPath(
-        "生活/日子一天天过去/2026/2026-07/想法/灵感.md",
+        "生活/日子一天天过去/2026/2026-07/Yan帳/想法/灵感.md",
         layout,
       ),
     ).toBe(false);

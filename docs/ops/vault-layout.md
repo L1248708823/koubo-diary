@@ -11,7 +11,9 @@ _inbox/
 _inbox/_quarantine/
 _staging/
 _processor/
-想法/                 # 若尚不存在
+Yan帳/
+  想法/               # 若尚不存在
+  研究/               # 研究任务输出
 .claude/skills/处理收件箱/SKILL.md  # CLI agent 的只读 skill 基线
 ```
 
@@ -29,7 +31,8 @@ _processor/
 | 类型 | 路径 | 规则 |
 |------|------|------|
 | 日记 | `生活/日子一天天过去/YYYY/YYYY-MM/YYYY-MM-DD.md` | 按日一篇，追加；新建月目录名 `YYYY-MM`（无前导空格） |
-| 想法 | `想法/短标题.md` | 一条一文件；扁平；v1 不按年归档 |
+| 想法 | `Yan帳/想法/短标题.md` | 一条一文件；扁平；v1 不按年归档 |
+| 研究简报 | `Yan帳/研究/短标题.md` | 一条研究任务一文件；保留来源、证据和不同观点 |
 | 待查 | frontmatter / 回执 `needs_research` | 只标不查 |
 | 收件 | `_inbox/*.md` | 只新建；成功后由脚本删 |
 
@@ -37,7 +40,8 @@ _processor/
 
 ```env
 DIARY_DIR=生活/日子一天天过去
-IDEAS_DIR=想法
+IDEAS_DIR=Yan帳/想法
+RESEARCH_DIR=Yan帳/研究
 INBOX_DIR=_inbox
 ```
 
@@ -46,7 +50,7 @@ INBOX_DIR=_inbox
 ## 明确不写
 
 - `吾志/`、`wolai-app/`、`学习/`、`工作/`、`投资/` 等
-- 想法按年自动归档目录（v1 无）
+- 想法或研究简报按年自动归档目录（v1 无）
 - 开放主题 tag 体系
 
 `.claude/skills/处理收件箱/SKILL.md` 是部署基线文件，不由 agent 在处理轮中修改。工具仓中的同名 skill 更新后，先同步到 vault 基线并单独提交，再运行处理环。

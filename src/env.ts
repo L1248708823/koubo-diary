@@ -30,6 +30,7 @@ export function loadLayoutFromEnv(): VaultLayout {
     )!,
     diaryDir: env("DIARY_DIR", base.diaryDir)!,
     ideasDir: env("IDEAS_DIR", base.ideasDir)!,
+    researchDir: env("RESEARCH_DIR", base.researchDir)!,
     processorDir: env("PROCESSOR_DIR", base.processorDir)!,
     stagingDir: env("STAGING_DIR", base.stagingDir)!,
   };

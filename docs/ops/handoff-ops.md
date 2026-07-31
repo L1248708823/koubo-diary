@@ -81,14 +81,15 @@ git push -u origin main
 ```text
 vault 根/
   日记/           # 或 Daily notes / Journal …
-  想法/           # 或 灵感/ …
+  Yan帳/想法/     # 工具维护的长期想法区
+  Yan帳/研究/     # 研究简报区
   _inbox/         # 若还没有，部署时创建
   其它文件夹/     # 处理环不应改
 ```
 
 我会用来：
 
-- 改 `.env` 的 `DIARY_DIR` / `IDEAS_DIR`（及文档示例）
+- 改 `.env` 的 `DIARY_DIR` / `IDEAS_DIR` / `RESEARCH_DIR`（及文档示例）
 - 核对 skill 文案里的路径说法
 - **非必需**微调提示词；没有目录也能靠配置跑，有则少踩「写错文件夹」
 
@@ -122,12 +123,12 @@ vault 根/
 
 1. VPS：Node ≥20、git、时区建议 `Asia/Shanghai`  
 2. Clone 工具仓 + vault 仓  
-3. vault 布局见 `docs/ops/vault-layout.md`：建 `_inbox/`、隔离区、`_staging/`、`_processor/`、`想法/`，并将工具仓 `skills/处理收件箱/SKILL.md` 复制为 vault 的 `.claude/skills/处理收件箱/SKILL.md`；日记写既有树 `生活/日子一天天过去/`（勿另起平行口播日记区）  
+3. vault 布局见 `docs/ops/vault-layout.md`：建 `_inbox/`、隔离区、`_staging/`、`_processor/`、`Yan帳/想法/`、`Yan帳/研究/`，并将工具仓 `skills/处理收件箱/SKILL.md` 复制为 vault 的 `.claude/skills/处理收件箱/SKILL.md`；日记写既有树 `生活/日子一天天过去/`（勿另起平行口播日记区）
 4. 环境变量（`EnvironmentFile=` 或 `/opt/koubo-diary/.env`）：  
    - `INGEST_TOKEN`（长随机）  
    - `VAULT_PATH`  
    - `VAULT_GIT_MODE=remote`（生产指向真实 Obsidian vault 仓库，不是工具仓）
-   - `DIARY_DIR=生活/日子一天天过去`、`IDEAS_DIR=想法`  
+   - `DIARY_DIR=生活/日子一天天过去`、`IDEAS_DIR=Yan帳/想法`、`RESEARCH_DIR=Yan帳/研究`
    - `AGENT_PROVIDER=codex` 或 `AGENT_PROVIDER=claude`  
    - 对应 CLI 的 `CODEX_BIN` / `CLAUDE_BIN`，以及该 CLI 的本机登录或凭证  
    - `LOCK_PATH` / `WAKE_FLAG_PATH`  

@@ -92,7 +92,7 @@ Sources: `CONTEXT.md`, `docs/adr/0001`–`0005`, `temp/tech-design-processor-loo
 ### Vault 约定
 
 - `_inbox/` 收件箱；`_inbox/_quarantine/` 隔离区；`_staging/` 同轮草稿；`_processor/` 含 `STATE.md`、`last-run.json`、可选 run log。  
-- 日记目录、想法目录名可配置（默认「日记/」「想法/」）。  
+- 日记、Yan帳 想法和研究目录名可配置（默认 `生活/日子一天天过去`、`Yan帳/想法`、`Yan帳/研究`）。
 - 收件箱文件名：`YYYYMMDD-HHMMSS-<shortid>.md`；frontmatter 含 id、captured_at、source、attempts。
 
 ### 回执契约（编排与 agent 的交界）
@@ -110,7 +110,7 @@ Sources: `CONTEXT.md`, `docs/adr/0001`–`0005`, `temp/tech-design-processor-loo
 
 ### 机械验收（通过才删 inbox 并 commit）
 
-- 变更路径 ∈ 白名单：`_inbox/**`、`_staging/**`、`_processor/**`、日记目录、想法目录。  
+- 变更路径 ∈ 白名单：`_inbox/**`、`_staging/**`、`_processor/**`、日记目录、`Yan帳/想法/`、`Yan帳/研究/`。
 - 回执合法；done 的 diary（及声明的 idea）存在；跑前快照中对应 inbox 仍在（由脚本删）。  
 - 禁止「回执未授权」的 inbox 删除；发现则失败并尽量恢复。  
 - failed 项 inbox 仍在；attempts 递增；≥3 或回执 quarantine → 移入隔离区。  

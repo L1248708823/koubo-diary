@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadAgentConfigFromEnv, loadIngestConfigFromEnv } from "./env.js";
+import {
+  loadAgentConfigFromEnv,
+  loadIngestConfigFromEnv,
+  loadLayoutFromEnv,
+} from "./env.js";
 
 describe("agent provider config", () => {
   afterEach(() => {
@@ -48,5 +52,16 @@ describe("agent provider config", () => {
     vi.stubEnv("VAULT_GIT_MODE", "other");
 
     expect(() => loadIngestConfigFromEnv()).toThrow("VAULT_GIT_MODE");
+  });
+
+  it("读取 Yan帳 想法与研究目录配置", () => {
+    vi.stubEnv("VAULT_PATH", "D:/vault");
+    vi.stubEnv("IDEAS_DIR", "Yan帳/想法");
+    vi.stubEnv("RESEARCH_DIR", "Yan帳/研究");
+
+    expect(loadLayoutFromEnv()).toMatchObject({
+      ideasDir: "Yan帳/想法",
+      researchDir: "Yan帳/研究",
+    });
   });
 });

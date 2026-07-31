@@ -8,6 +8,7 @@ export async function ensureVaultDirs(layout: VaultLayout): Promise<void> {
     layout.quarantineDir,
     layout.diaryDir,
     layout.ideasDir,
+    layout.researchDir,
     layout.processorDir,
     layout.stagingDir,
   ];
