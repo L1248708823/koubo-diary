@@ -49,6 +49,14 @@ export async function acceptRound(args: {
     return { ok: false, reason: "回执 JSON 结构不合法", unauthorizedDeletes: [] };
   }
   const receipt: Receipt = rawReceipt;
+  const duplicateInbox = findDuplicateInbox(receipt);
+  if (duplicateInbox) {
+    return {
+      ok: false,
+      reason: `回执重复交代 inbox: ${duplicateInbox}`,
+      unauthorizedDeletes: [],
+    };
+  }
 
   // Whitelist
   for (const ch of changes) {
@@ -220,12 +228,39 @@ function isValidReceiptShape(r: unknown): r is Receipt {
   for (const p of obj.failed) {
     if (!p || typeof p !== "object") return false;
     const item = p as Record<string, unknown>;
-    if (typeof item.inbox !== "string" || item.status !== "failed") return false;
+    if (
+      typeof item.inbox !== "string" ||
+      item.status !== "failed" ||
+      typeof item.error !== "string"
+    ) {
+      return false;
+    }
   }
   for (const p of obj.quarantine) {
     if (!p || typeof p !== "object") return false;
     const item = p as Record<string, unknown>;
-    if (typeof item.inbox !== "string" || item.status !== "quarantine") return false;
+    if (
+      typeof item.inbox !== "string" ||
+      item.status !== "quarantine" ||
+      (item.error !== undefined && typeof item.error !== "string")
+    ) {
+      return false;
+    }
   }
   return true;
+}
+
+function findDuplicateInbox(receipt: Receipt): string | null {
+  const seen = new Set<string>();
+  const inboxes = [
+    ...receipt.processed.map((item) => item.inbox),
+    ...receipt.failed.map((item) => item.inbox),
+    ...receipt.quarantine.map((item) => item.inbox),
+  ];
+  for (const inbox of inboxes) {
+    const normalized = normalize(inbox);
+    if (seen.has(normalized)) return normalized;
+    seen.add(normalized);
+  }
+  return null;
 }

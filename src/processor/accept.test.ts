@@ -52,4 +52,33 @@ describe("processor acceptance", () => {
       expect(result.reason).toContain("idea 路径");
     }
   });
+
+  it("拒绝同一 inbox 在回执中重复出现", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "重复回执");
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [
+        { inbox, status: "done", diary },
+        { inbox, status: "done", diary },
+      ],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("重复交代");
+    }
+  });
 });

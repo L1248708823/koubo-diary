@@ -53,7 +53,7 @@ await copyFile(
 
 console.log(`本地配置已更新：${localConfigPath}`);
 if (vaultExists) {
-  console.log("临时 vault 已存在，已补齐目录并同步处理收件箱 skill，保留现有测试内容。");
+  console.log("临时 vault 已存在，已补齐目录并同步 skill 基线，保留现有测试内容。");
 } else {
   console.log(`本地测试 vault 已创建：${vaultPath}`);
 }

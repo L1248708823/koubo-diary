@@ -32,7 +32,7 @@ export function whitelistPrefixes(layout: VaultLayout): string[] {
 }
 
 function normalizePrefix(dir: string): string {
-  return dir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
+  return `${normalizeDir(dir)}/`;
 }
 
 export function isIdeaPath(path: string, layout: VaultLayout): boolean {
@@ -78,7 +78,9 @@ function normalizeDir(value: string): string {
 
 function isSafeRelativePath(value: string): boolean {
   if (!value || value.startsWith("/") || /^[A-Za-z]:\//.test(value)) return false;
-  return !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+  return !value
+    .split("/")
+    .some((segment) => segment === "" || segment === "." || segment === "..");
 }
 
 function isNestedIdeaPathInDiary(value: string, layout: VaultLayout): boolean {
