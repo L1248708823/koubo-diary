@@ -47,6 +47,18 @@ export function isIdeaPath(path: string, layout: VaultLayout): boolean {
   return filename.length > 0 && !filename.includes("/") && filename.endsWith(".md");
 }
 
+export function isDiaryPath(path: string, layout: VaultLayout): boolean {
+  const normalized = normalizeRelativePath(path);
+  if (!isSafeRelativePath(normalized)) return false;
+
+  const diaryRoot = normalizeDir(layout.diaryDir);
+  return (
+    normalized.startsWith(`${diaryRoot}/`) &&
+    normalized.endsWith(".md") &&
+    !isNestedIdeaPathInDiary(normalized, layout)
+  );
+}
+
 export function isWhitelistedPath(path: string, layout: VaultLayout): boolean {
   const normalized = normalizeRelativePath(path);
   if (!isSafeRelativePath(normalized)) return false;
@@ -58,7 +70,7 @@ export function isWhitelistedPath(path: string, layout: VaultLayout): boolean {
   const prefixes = whitelistPrefixes(layout);
   for (const prefix of prefixes) {
     const bare = prefix.slice(0, -1);
-    if (normalized === bare) return true;
+    if (normalized === bare) return bare !== normalizeDir(layout.ideasDir);
     if (!normalized.startsWith(prefix)) continue;
     if (bare === normalizeDir(layout.ideasDir)) {
       return isIdeaPath(normalized, layout);

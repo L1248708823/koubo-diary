@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isIdeaPath, isWhitelistedPath, defaultLayout } from "./config.js";
+import {
+  defaultLayout,
+  isDiaryPath,
+  isIdeaPath,
+  isWhitelistedPath,
+} from "./config.js";
 import { makeInboxId } from "./vault/fs.js";
 
 describe("config whitelist", () => {
@@ -9,6 +14,9 @@ describe("config whitelist", () => {
     expect(isWhitelistedPath("_inbox/a.md", layout)).toBe(true);
     expect(
       isWhitelistedPath("生活/日子一天天过去/2026/2026-07/2026-07-29.md", layout),
+    ).toBe(true);
+    expect(
+      isDiaryPath("生活/日子一天天过去/2026/2026-07/2026-07-29.md", layout),
     ).toBe(true);
     expect(isWhitelistedPath("想法/灵感.md", layout)).toBe(true);
     expect(isIdeaPath("想法/灵感.md", layout)).toBe(true);
@@ -22,6 +30,8 @@ describe("config whitelist", () => {
     expect(isWhitelistedPath("README.md", layout)).toBe(false);
     expect(isWhitelistedPath("吾志/2021/2021-11.md", layout)).toBe(false);
     expect(isWhitelistedPath("学习/ai/common.md", layout)).toBe(false);
+    expect(isWhitelistedPath("想法", layout)).toBe(false);
+    expect(isDiaryPath("README.md", layout)).toBe(false);
     expect(isIdeaPath("想法/主题/细节.md", layout)).toBe(false);
     expect(isWhitelistedPath("想法/主题/细节.md", layout)).toBe(false);
     expect(

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isIdeaPath, isWhitelistedPath } from "../config.js";
+import { isDiaryPath, isIdeaPath, isWhitelistedPath } from "../config.js";
 import type {
   ChangedPath,
   Receipt,
@@ -134,6 +134,13 @@ export async function acceptRound(args: {
       return {
         ok: false,
         reason: `done 缺 diary: ${item.inbox}`,
+        unauthorizedDeletes: [],
+      };
+    }
+    if (!isDiaryPath(item.diary, layout)) {
+      return {
+        ok: false,
+        reason: `diary 路径必须位于 ${layout.diaryDir}/ 下: ${item.diary}`,
         unauthorizedDeletes: [],
       };
     }

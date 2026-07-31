@@ -48,8 +48,11 @@ export function createCliAgentRunner(spec: CliAgentSpec): AgentRunner {
 
 export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
   const list = ctx.pendingInbox.map((p) => `- ${p}`).join("\n");
+  const inbox = ctx.layout.inboxDir;
   const diary = ctx.layout.diaryDir;
   const ideas = ctx.layout.ideasDir;
+  const processor = ctx.layout.processorDir;
+  const staging = ctx.layout.stagingDir;
   return [
     `请按 skill「${skill}」处理本轮收件箱（若工作区有 .claude/skills/${skill}/SKILL.md 请严格遵循）。`,
     "工作目录已是 vault 根目录。",
@@ -60,14 +63,15 @@ export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
     `- 日记前缀：${diary}/  → 文件 ${diary}/YYYY/YYYY-MM/YYYY-MM-DD.md`,
     `- 想法路径：${ideas}/短标题.md，文件必须直接位于该目录（一条一文件；v1 不归档）`,
     `- 日记树下的 ${ideas}/ 子目录不是想法目录，禁止在那里创建想法文件`,
+    `- 收件箱：${inbox}/；状态与回执：${processor}/；同轮草稿：${staging}/`,
     "",
     "硬性约束：",
-    `1. 只改白名单路径：_inbox（勿删文件）、_staging、_processor、${diary}、${ideas}。`,
+    `1. 只改白名单路径：${inbox}（勿删文件）、${staging}、${processor}、${diary}、${ideas}。`,
     "2. 不要执行 git commit / push / config。",
-    "3. 不要删除 _inbox 下的文件；只在回执里声明 done/failed/quarantine。",
+    `3. 不要删除 ${inbox} 下的文件；只在回执里声明 done/failed/quarantine。`,
     "4. 写回以日记为轴；可选想法并互链（日记=钩子+链接，想法=全文）；待查只打标。",
     "5. 轻整理：去赘词/重复、保语气；禁止升格代写、扩写未说内容、伪调研结论。",
-    "6. 结束后必须写出 `_processor/last-run.json`（见 skill 中的 schema）。",
+    `6. 结束后必须写出 ${processor}/last-run.json（见 skill 中的 schema）。`,
     "7. 快照内每条 inbox 都必须在回执中交代，禁止漏报。",
   ].join("\n");
 }
