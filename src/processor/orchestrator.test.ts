@@ -60,10 +60,10 @@ describe("processor orchestrator (seam 1)", () => {
     const inboxRel = await seedInbox(vault.layout, "今天想通了一件事");
     await captureHead();
 
-    const diaryRel = `${vault.layout.diaryDir}/2026-07-29.md`;
+    const diaryRel = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
     const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
       expect(pendingInbox).toContain(inboxRel);
-      await writeDiary(layout, "2026-07-29.md", "## 12:00\n\n今天想通了一件事\n");
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "## 12:00\n\n今天想通了一件事\n");
       return {
         ok: true,
         round_ended_at: "2026-07-29T12:05:00+08:00",
@@ -106,7 +106,7 @@ describe("processor orchestrator (seam 1)", () => {
         {
           inbox: inboxRel,
           status: "done",
-          diary: `${vault.layout.diaryDir}/2026-07-29.md`,
+          diary: `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`,
         },
       ],
       failed: [],
@@ -243,7 +243,7 @@ describe("processor orchestrator (seam 1)", () => {
       for (const inbox of pendingInbox) {
         const diary = await writeDiary(
           layout,
-          "2026-07-29.md",
+          "2026/2026-07/2026-07-29.md",
           `## note\n\n${inbox}\n`,
         );
         // append-style: rewrite ok for fake
@@ -303,7 +303,7 @@ describe("processor orchestrator (seam 1)", () => {
     };
 
     const agent = createFakeAgent(async ({ layout }) => {
-      await writeDiary(layout, "2026-07-29.md", "ok\n");
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "ok\n");
       return {
         ok: true,
         round_ended_at: "2026-07-29T12:05:00+08:00",
@@ -311,7 +311,7 @@ describe("processor orchestrator (seam 1)", () => {
           {
             inbox: inboxRel,
             status: "done",
-            diary: `${layout.diaryDir}/2026-07-29.md`,
+            diary: `${layout.diaryDir}/2026/2026-07/2026-07-29.md`,
           },
         ],
         failed: [],
@@ -344,7 +344,7 @@ describe("processor orchestrator (seam 1)", () => {
     await captureHead();
 
     const agent = createFakeAgent(async ({ layout }) => {
-      const diary = await writeDiary(layout, "2026-07-29.md", "## only a\n");
+      const diary = await writeDiary(layout, "2026/2026-07/2026-07-29.md", "## only a\n");
       return {
         ok: true,
         round_ended_at: "2026-07-29T12:05:00+08:00",

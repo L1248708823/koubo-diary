@@ -65,7 +65,8 @@ export async function acceptRound(args: {
       unauthorizedDeletes: [],
     };
   }
-  const outOfRoundInbox = findOutOfRoundInbox(receipt, snapshotInbox);
+  const snapshotSet = new Set(snapshotInbox.map(normalize));
+  const outOfRoundInbox = findOutOfRoundInbox(receipt, snapshotSet);
   if (outOfRoundInbox) {
     return {
       ok: false,
@@ -83,6 +84,13 @@ export async function acceptRound(args: {
         unauthorizedDeletes: [],
       };
     }
+    if (isInboxPath(ch.path, layout) && ch.status !== "D") {
+      return {
+        ok: false,
+        reason: `agent 不得修改 inbox: ${ch.path}`,
+        unauthorizedDeletes: [],
+      };
+    }
   }
 
   const declaredDone = new Set(
@@ -94,25 +102,22 @@ export async function acceptRound(args: {
   const declaredQuarantine = new Set(
     receipt.quarantine.map((p) => normalize(p.inbox)),
   );
-  const authorizedDelete = new Set<string>([...declaredDone]);
-
-  // Unauthorized inbox deletes: deleted in working tree, was in snapshot, not in done list
+  // Agent 不得删除 inbox；删除由编排脚本在验收通过后执行。
   const unauthorizedDeletes: string[] = [];
   for (const ch of changes) {
     if (ch.status !== "D") continue;
     if (!isInboxPath(ch.path, layout)) continue;
     const n = normalize(ch.path);
-    if (!snapshotInbox.map(normalize).includes(n)) continue;
-    if (!authorizedDelete.has(n)) {
+    if (!unauthorizedDeletes.includes(n)) {
       unauthorizedDeletes.push(n);
     }
   }
-  // Also: snapshot inbox missing on disk but not declared done (agent deleted without D in diff edge cases)
+  // Agent 删除但 diff 未显式报告时也必须恢复。
   for (const inbox of snapshotInbox) {
     const n = normalize(inbox);
     const abs = path.join(layout.vaultPath, inbox);
     const exists = await pathExists(abs);
-    if (!exists && !authorizedDelete.has(n) && !declaredQuarantine.has(n)) {
+    if (!exists) {
       if (!unauthorizedDeletes.includes(n)) unauthorizedDeletes.push(n);
     }
   }
@@ -178,7 +183,7 @@ export async function acceptRound(args: {
         unauthorizedDeletes: [],
       };
     }
-    if (!snapshotInbox.map(normalize).includes(normalize(item.inbox))) {
+    if (!snapshotSet.has(normalize(item.inbox))) {
       return {
         ok: false,
         reason: `done 项不在跑前快照中: ${item.inbox}`,
@@ -225,7 +230,7 @@ export async function acceptRound(args: {
 }
 
 function normalize(p: string): string {
-  return p.replace(/\\/g, "/");
+  return p.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
 }
 
 function isValidReceiptShape(r: unknown): r is Receipt {
@@ -296,10 +301,9 @@ function findDuplicateIdea(receipt: Receipt): string | null {
 
 function findOutOfRoundInbox(
   receipt: Receipt,
-  snapshotInbox: string[],
+  snapshotInbox: Set<string>,
 ): string | null {
-  const snapshot = new Set(snapshotInbox.map(normalize));
-  return receiptInboxes(receipt).find((inbox) => !snapshot.has(normalize(inbox))) ?? null;
+  return receiptInboxes(receipt).find((inbox) => !snapshotInbox.has(normalize(inbox))) ?? null;
 }
 
 function receiptInboxes(receipt: Receipt): string[] {

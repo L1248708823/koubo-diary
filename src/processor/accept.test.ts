@@ -161,4 +161,29 @@ describe("processor acceptance", () => {
       expect(result.reason).toContain("本轮快照");
     }
   });
+
+  it("拒绝 agent 修改 inbox 内容", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "不可修改");
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [],
+      failed: [{ inbox, status: "failed", error: "保留原文" }],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [{ path: inbox, status: "M" }],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("不得修改 inbox");
+    }
+  });
 });

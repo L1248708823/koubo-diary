@@ -32,6 +32,9 @@ describe("config whitelist", () => {
     expect(isWhitelistedPath("学习/ai/common.md", layout)).toBe(false);
     expect(isWhitelistedPath("想法", layout)).toBe(false);
     expect(isDiaryPath("README.md", layout)).toBe(false);
+    expect(
+      isDiaryPath("生活/日子一天天过去/随便.md", layout),
+    ).toBe(false);
     expect(isIdeaPath("想法/主题/细节.md", layout)).toBe(false);
     expect(isWhitelistedPath("想法/主题/细节.md", layout)).toBe(false);
     expect(

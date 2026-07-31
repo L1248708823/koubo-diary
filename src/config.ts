@@ -52,9 +52,10 @@ export function isDiaryPath(path: string, layout: VaultLayout): boolean {
   if (!isSafeRelativePath(normalized)) return false;
 
   const diaryRoot = normalizeDir(layout.diaryDir);
+  const relative = normalized.slice(`${diaryRoot}/`.length);
   return (
     normalized.startsWith(`${diaryRoot}/`) &&
-    normalized.endsWith(".md") &&
+    /^\d{4}\/\d{4}-\d{2}\/\d{4}-\d{2}-\d{2}\.md$/.test(relative) &&
     !isNestedIdeaPathInDiary(normalized, layout)
   );
 }

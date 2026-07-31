@@ -34,7 +34,7 @@ describe("ingest wakes processor (seam 3)", () => {
     const vault = await createTempVault();
     vaults.push(vault);
     const lock = createMemoryLock();
-    const { workspace } = await createFakeVaultAccess(vault.layout);
+    const { workspace, captureHead } = await createFakeVaultAccess(vault.layout);
     const clock = fixedClock("2026-07-29T15:30:12+08:00");
 
     const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
@@ -42,7 +42,7 @@ describe("ingest wakes processor (seam 3)", () => {
       for (const inbox of pendingInbox) {
         const diary = await writeDiary(
           layout,
-          "2026-07-29.md",
+          "2026/2026-07/2026-07-29.md",
           `## 15:30\n\n整理后的口播\n\n来源: ${inbox}\n`,
         );
         processed.push({
@@ -70,8 +70,9 @@ describe("ingest wakes processor (seam 3)", () => {
       path: "/ingest",
       host: "127.0.0.1",
       port: 0,
-      onWake: () => {
+      onWake: async () => {
         wakes.push("wake");
+        await captureHead();
         // 同步化：测试里直接排队跑编排（生产可写 flag / systemctl）
         roundPromise = runProcessorRound({
           options: vault.options,
@@ -113,7 +114,7 @@ describe("ingest wakes processor (seam 3)", () => {
     expect(await listPendingInbox(vault.layout)).toEqual([]);
     expect(
       await pathExists(
-        path.join(vault.root, vault.layout.diaryDir, "2026-07-29.md"),
+        path.join(vault.root, vault.layout.diaryDir, "2026", "2026-07", "2026-07-29.md"),
       ),
     ).toBe(true);
   });
@@ -138,7 +139,7 @@ describe("ingest wakes processor (seam 3)", () => {
         maxConcurrent = Math.max(maxConcurrent, concurrent);
         await new Promise((r) => setTimeout(r, 80));
         const inbox = ctx.pendingInbox[0]!;
-        await writeDiary(ctx.layout, "2026-07-29.md", "x\n");
+        await writeDiary(ctx.layout, "2026/2026-07/2026-07-29.md", "x\n");
         const { writeReceipt } = await import("../vault/fs.js");
         await writeReceipt(ctx.layout, {
           ok: true,
@@ -147,7 +148,7 @@ describe("ingest wakes processor (seam 3)", () => {
             {
               inbox,
               status: "done",
-              diary: `${ctx.layout.diaryDir}/2026-07-29.md`,
+              diary: `${ctx.layout.diaryDir}/2026/2026-07/2026-07-29.md`,
             },
           ],
           failed: [],

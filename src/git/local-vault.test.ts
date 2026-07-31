@@ -19,10 +19,15 @@ describe("local vault ops", () => {
     const workspace = createLocalVaultWorkspace(vault.root);
 
     expect(await workspace.prepare()).toEqual({ ok: true });
-    await writeDiary(vault.layout, "2026-07-30.md", "本地文件模式\n");
+    await writeDiary(vault.layout, "2026/2026-07/2026-07-30.md", "本地文件模式\n");
 
     expect(await workspace.listChanges()).toContainEqual({
-      path: path.posix.join(vault.layout.diaryDir, "2026-07-30.md"),
+      path: path.posix.join(
+        vault.layout.diaryDir,
+        "2026",
+        "2026-07",
+        "2026-07-30.md",
+      ),
       status: "A",
     });
     await workspace.prepare();

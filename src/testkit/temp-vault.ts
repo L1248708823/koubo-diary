@@ -245,7 +245,7 @@ export async function writeDiary(
   body: string,
 ): Promise<string> {
   const rel = `${layout.diaryDir}/${dateFile}`.replace(/\\/g, "/");
-  await mkdir(path.join(layout.vaultPath, layout.diaryDir), { recursive: true });
+  await mkdir(path.dirname(path.join(layout.vaultPath, rel)), { recursive: true });
   await writeFile(path.join(layout.vaultPath, rel), body, "utf8");
   return rel;
 }
