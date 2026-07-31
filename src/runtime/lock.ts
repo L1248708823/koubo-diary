@@ -1,6 +1,7 @@
-import { mkdir, writeFile, open, rm } from "node:fs/promises";
+import { mkdir, writeFile, open, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { Lock, LockHandle } from "../types.js";
+import { logInfo } from "./log.js";
 
 /**
  * 文件锁（VPS 本地路径，不进 git）。
@@ -14,14 +15,25 @@ export function createFileLock(lockPath: string): Lock {
         const fh = await open(lockPath, "wx");
         await fh.writeFile(`${process.pid}\n${new Date().toISOString()}\n`);
         await fh.close();
+        logInfo("lock.acquired", { lockPath });
         return {
           async release() {
             await rm(lockPath, { force: true });
+            logInfo("lock.released", { lockPath });
           },
         };
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
-        if (code === "EEXIST") return null;
+        if (code === "EEXIST") {
+          let owner: string | undefined;
+          try {
+            owner = (await readFile(lockPath, "utf8")).trim();
+          } catch {
+            /* 锁文件可能刚好被释放。 */
+          }
+          logInfo("lock.busy", { lockPath, owner });
+          return null;
+        }
         throw err;
       }
     },

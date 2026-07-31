@@ -3,11 +3,11 @@ import path from "node:path";
 import { pathExists, listPendingInbox } from "../vault/fs.js";
 import {
   createTempVault,
-  createFakeGit,
   fixedClock,
   type TempVault,
 } from "../testkit/temp-vault.js";
 import { createIngestServer, type IngestServer } from "./server.js";
+import { createLocalInboxDelivery } from "./delivery.js";
 import { readdir } from "node:fs/promises";
 
 describe("ingest HTTP (seam 2)", () => {
@@ -25,20 +25,22 @@ describe("ingest HTTP (seam 2)", () => {
     }
   });
 
-  async function setup(token = "test-token-secret") {
+  async function setup(
+    token = "test-token-secret",
+    corsOrigin?: string,
+  ) {
     const vault = await createTempVault();
     vaults.push(vault);
-    const { git, captureHead } = await createFakeGit(vault.layout);
-    await captureHead();
     const wakes: string[] = [];
+    const clock = fixedClock("2026-07-29T15:30:12+08:00");
     const server = await createIngestServer({
-      layout: vault.layout,
       token,
-      git,
-      clock: fixedClock("2026-07-29T15:30:12+08:00"),
+      delivery: createLocalInboxDelivery(vault.layout, clock),
+      clock,
       path: "/ingest",
       host: "127.0.0.1",
       port: 0,
+      ...(corsOrigin ? { corsOrigin } : {}),
       onWake: async () => {
         wakes.push("wake");
       },
@@ -141,5 +143,53 @@ describe("ingest HTTP (seam 2)", () => {
     );
     expect(agentCalled).toBe(false);
     expect(wakes.length).toBe(1);
+  });
+
+  it("允许本地前端的 CORS 预检", async () => {
+    const { server } = await setup(
+      "test-token-secret",
+      "http://127.0.0.1:4173",
+    );
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/ingest`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://127.0.0.1:4173",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "authorization, content-type",
+      },
+    });
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe(
+      "http://127.0.0.1:4173",
+    );
+    expect(res.headers.get("access-control-allow-methods")).toBe(
+      "POST, OPTIONS",
+    );
+  });
+
+  it("本地投递 adapter 不依赖 Git", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock();
+    const server = await createIngestServer({
+      token: "local-token",
+      delivery: createLocalInboxDelivery(vault.layout, clock),
+      clock,
+      path: "/ingest",
+      host: "127.0.0.1",
+      port: 0,
+    });
+    servers.push(server);
+
+    const res = await post(
+      server,
+      { text: "local filesystem delivery" },
+      { authorization: "Bearer local-token" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.json?.delivered).toBe(true);
   });
 });

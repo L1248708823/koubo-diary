@@ -122,12 +122,14 @@ vault 根/
 
 1. VPS：Node ≥20、git、时区建议 `Asia/Shanghai`  
 2. Clone 工具仓 + vault 仓  
-3. vault 布局见 `docs/ops/vault-layout.md`：建 `_inbox/`、隔离区、`_staging/`、`_processor/`、`想法/`；日记写既有树 `生活/日子一天天过去/`（勿另起平行口播日记区）  
+3. vault 布局见 `docs/ops/vault-layout.md`：建 `_inbox/`、隔离区、`_staging/`、`_processor/`、`想法/`，并将工具仓 `skills/处理收件箱/SKILL.md` 复制为 vault 的 `.claude/skills/处理收件箱/SKILL.md`；日记写既有树 `生活/日子一天天过去/`（勿另起平行口播日记区）  
 4. 环境变量（`EnvironmentFile=` 或 `/opt/koubo-diary/.env`）：  
    - `INGEST_TOKEN`（长随机）  
    - `VAULT_PATH`  
+   - `VAULT_GIT_MODE=remote`（生产指向真实 Obsidian vault 仓库，不是工具仓）
    - `DIARY_DIR=生活/日子一天天过去`、`IDEAS_DIR=想法`  
-   - `CLAUDE_BIN` 或 `ANTHROPIC_API_KEY`  
+   - `AGENT_PROVIDER=codex` 或 `AGENT_PROVIDER=claude`  
+   - 对应 CLI 的 `CODEX_BIN` / `CLAUDE_BIN`，以及该 CLI 的本机登录或凭证  
    - `LOCK_PATH` / `WAKE_FLAG_PATH`  
 5. systemd  
    - `koubo-ingest.service`：常驻 `npm run ingest`（或 `npx tsx src/cli/run-ingest.ts`）  
@@ -155,7 +157,7 @@ vault 根/
 |------|------|----------|
 | Ingest 默认几乎无 CORS | 跨端口本地页可能被浏览器拦 | 上云同域 或 开发期加 Origin 白名单 |
 | 无现成 systemd unit 文件进仓 | 上云要手写 unit | 部署会话补进 `docs/ops/systemd/` |
-| 真 Claude CLI 旗标未在你机器钉死 | `claude-runner` 可能要改参数 | 05 真跑时调 |
+| Codex / Claude CLI 旗标未在目标机器钉死 | 对应 adapter 可能要改参数 | 05 真跑时调 |
 | skill 安装位置 | Claude Code 是否读仓库内 `skills/` | 真跑时验证或拷到约定目录 |
 | push 失败时客户端重试可能重复 inbox | 不同 id 两条 | 知悉即可；日后可做幂等 |
 | 捕捉端「今日已投」仅本机 | 换机计数不准 | 产品接受 |
@@ -178,7 +180,7 @@ vault 根/
 
 ## 6. 给下一会话 agent 的启动句
 
-> 已建 private 工具仓与 vault 仓；VPS 上两仓已 clone；env 在 `<path>`。请读 `docs/ops/local-test.md` 与本文件，先 loopback 冒烟，再接真 Claude，最后按 `field-drill.md` 演习。日记目录实名：……
+> 已建 private 工具仓与 vault 仓；VPS 上两仓已 clone；env 在 `<path>`。请读 `docs/ops/local-test.md` 与本文件，先 loopback 冒烟，再按 `AGENT_PROVIDER` 接 Codex 或 Claude，最后按 `field-drill.md` 演习。日记目录实名：……
 
 ---
 

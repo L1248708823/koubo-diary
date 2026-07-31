@@ -6,7 +6,7 @@ Remote：`https://github.com/L1248708823/-koubo-diary.git`（private；仓名带
 
 ## Goal for the next session
 
-把 **05 真 Claude** 与 **06 托底/实机** 接到可用：先 push 未上云提交 → VPS 两仓就绪 → env → loopback 冒烟 → 真 skill → field-drill。  
+把 **05 真 CLI agent（Codex / Claude 可切换）** 与 **06 托底/实机** 接到可用：先整理本地未提交修改 → VPS 两仓就绪 → env → loopback 冒烟 → 真 skill → field-drill。  
 日记/想法路径已按 ADR-0006 锁死，**不要重开 grill**。
 
 ## Suggested skills
@@ -26,24 +26,24 @@ Remote：`https://github.com/L1248708823/-koubo-diary.git`（private；仓名带
 | 02 收件 HTTP | done |
 | 03 投递唤醒 | done |
 | 04 捕捉端真投递 UI | `capture/index.html` |
-| 05 skill + claude-runner **骨架** | 有；真跑等密钥 |
+| 05 skill + Codex/Claude runner **adapter** | 有；真跑等本机 CLI 登录 |
 | 06 STATE/托底文档/演习模板 | 有；实机演习未做 |
 | 运营/本地测文档 | `docs/ops/*` |
 | 日记树 / 想法 grill → ADR-0006 | **已定稿落盘** |
 
-`npm test`：**19 passed**；`npm run typecheck` 干净。
+上次记录：`npm test` **19 passed**；`npm run typecheck` 干净。当前环境需重新安装对应平台依赖后复验。
 
 ### Git（重要）
 
 ```
-main...origin/main [ahead 1]
-d054f12 docs: 锁定日记树写回与扁平想法（ADR-0006）  ← 未 push
+b266c96 (HEAD -> main, origin/main) docs: 新会话 handoff（push 与上云续作）
+d054f12 docs: 锁定日记树写回与扁平想法（ADR-0006）
 8770597 docs: 补本地测试与运营交接文档
 097fdd9 fix: 回执漏报…
 9533199 feat: 处理环基础开发…
 ```
 
-**下一会话第一件事：`git push origin main`**，否则 VPS clone 不到 ADR-0006。
+**当前远端已包含 HEAD；下一步不要盲目 push，先整理工作区未提交修改，再按需要提交和推送。**
 
 ### 硬决策（勿重议）
 
@@ -71,13 +71,13 @@ d054f12 docs: 锁定日记树写回与扁平想法（ADR-0006）  ← 未 push
    `DIARY_DIR=生活/日子一天天过去`、`IDEAS_DIR=想法`、`INGEST_TOKEN`、`VAULT_PATH`、Claude 凭证  
 4. 本机或 VPS loopback：`npm run ingest` + 静态 `capture/`（见 `local-test.md`）  
 5. 假 agent / 空跑确认写路径前缀正确  
-6. 真 Claude：`skills/处理收件箱` + `src/agent/claude-runner.ts` 旗标对齐  
+6. 真 CLI：`AGENT_PROVIDER=codex|claude` + 对应 `CODEX_BIN` / `CLAUDE_BIN`，按 `local-codex-smoke-test.md` 做 Windows 本地端到端测试  
 7. systemd/cron + `field-drill.md` 三场演习  
 8. 已知缺口（可顺手修）：ingest CORS 或同域反代；systemd unit 落盘；时区 `Asia/Shanghai`
 
 ## Explicitly not done
 
-- 真 Claude 口气抽查  
+- 真 Codex / Claude 口气抽查  
 - 公网 HTTPS / 手机实投  
 - field-drill 打勾  
 - 捕捉端 Tailwind 重构（用户未要求优先）  

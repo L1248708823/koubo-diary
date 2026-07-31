@@ -15,9 +15,17 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Local Codex permissions (machine-specific; never commit)
+.claude/settings.local.json
+
+# Local test config contains machine-specific paths and credentials
+config/local-codex.env
+capture/public/local-config.js
+
 # Local runtime (locks, temp vaults used by hand)
 /run/
 *.lock
 .temp-vaults/
 
 # Capture PWA may keep local settings; secrets stay in localStorage only on device
+capture/local-config.js

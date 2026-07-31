@@ -1,6 +1,6 @@
 import path from "node:path";
 import { defaultLayout } from "./config.js";
-import type { ProcessorOptions, VaultLayout } from "./types.js";
+import type { ProcessorOptions, VaultGitMode, VaultLayout } from "./types.js";
 
 function env(name: string, fallback?: string): string | undefined {
   const v = process.env[name];
@@ -43,22 +43,64 @@ export function loadProcessorOptionsFromEnv(): ProcessorOptions {
   };
 }
 
+export function loadVaultRuntimeConfigFromEnv(): {
+  gitRemote: string;
+  gitMode: VaultGitMode;
+} {
+  const gitMode = env("VAULT_GIT_MODE", "remote");
+  if (gitMode !== "remote" && gitMode !== "local") {
+    throw new Error("VAULT_GIT_MODE 只支持 remote 或 local");
+  }
+  return {
+    gitRemote: env("GIT_REMOTE", "origin")!,
+    gitMode,
+  };
+}
+
 export function loadIngestConfigFromEnv() {
   const token = env("INGEST_TOKEN");
   if (!token) throw new Error("缺少环境变量 INGEST_TOKEN");
+  const runtime = loadVaultRuntimeConfigFromEnv();
   return {
     token,
     host: env("INGEST_HOST", "127.0.0.1")!,
     port: envInt("INGEST_PORT", 8787),
     path: env("INGEST_PATH", "/ingest")!,
+    corsOrigin: env("INGEST_CORS_ORIGIN"),
     wakeMode: env("WAKE_MODE", "file") as "file" | "callback" | "none",
     wakeFlagPath: env("WAKE_FLAG_PATH", "/run/koubo-processor.wake")!,
     lockPath: env("LOCK_PATH", "/run/koubo-processor.lock")!,
-    gitRemote: env("GIT_REMOTE", "origin")!,
+    ...runtime,
   };
 }
 
-export function loadAgentModeFromEnv(): "fake-required" | "claude" {
-  if (env("CLAUDE_BIN") || env("ANTHROPIC_API_KEY")) return "claude";
-  return "fake-required";
+export type AgentProvider = "codex" | "claude";
+
+export type AgentConfig = {
+  provider: AgentProvider;
+  bin: string;
+  skill: string;
+};
+
+export function loadAgentConfigFromEnv(): AgentConfig {
+  const provider = env("AGENT_PROVIDER");
+  if (provider !== "codex" && provider !== "claude") {
+    throw new Error(
+      "缺少或不支持 AGENT_PROVIDER。请明确设置为 codex 或 claude",
+    );
+  }
+
+  const configuredBin = env(provider === "codex" ? "CODEX_BIN" : "CLAUDE_BIN");
+  const defaultBin =
+    process.platform === "win32"
+      ? provider === "codex"
+        ? "codex.cmd"
+        : "claude.cmd"
+      : provider;
+
+  return {
+    provider,
+    bin: configuredBin ?? defaultBin,
+    skill: env("PROCESSOR_SKILL", "处理收件箱")!,
+  };
 }

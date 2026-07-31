@@ -2,10 +2,11 @@ import path from "node:path";
 import type {
   AgentRunner,
   Clock,
-  GitOps,
   Lock,
   ProcessorOptions,
   RoundResult,
+  VaultPublisher,
+  VaultWorkspace,
 } from "../types.js";
 import {
   bumpInboxAttempts,
@@ -16,21 +17,30 @@ import {
   writeState,
 } from "../vault/fs.js";
 import { acceptRound } from "./accept.js";
+import { isWhitelistedPath } from "../config.js";
+import { logError, logInfo } from "../runtime/log.js";
 
 export type ProcessorDeps = {
   options: ProcessorOptions;
-  git: GitOps;
+  workspace: VaultWorkspace;
+  publisher?: VaultPublisher;
   lock: Lock;
   agent: AgentRunner;
   clock: Clock;
 };
 
 export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResult> {
-  const { options, git, lock, agent, clock } = deps;
+  const { options, workspace, publisher, lock, agent, clock } = deps;
   const layout = options.layout;
+  logInfo("processor.round_started", {
+    vaultPath: layout.vaultPath,
+    publisher: Boolean(publisher),
+    maxPerRound: options.maxPerRound,
+  });
 
   const handle = await lock.tryAcquire();
   if (!handle) {
+    logInfo("processor.round_locked", { vaultPath: layout.vaultPath });
     return {
       status: "locked",
       reason: "单实例锁已被占用",
@@ -41,15 +51,23 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
   }
 
   try {
-    const pull = await git.pull();
-    if (!pull.ok) {
+    const prepared = await workspace.prepare();
+    if (!prepared.ok) {
+      logError("processor.workspace_failed", {
+        reason: prepared.reason,
+        conflict: prepared.conflict ?? false,
+      });
       await writeStateSafe(
         layout,
-        stateBody(clock, "conflict", pull.reason ?? "git pull 失败"),
+        stateBody(
+          clock,
+          prepared.conflict ? "conflict" : "failed",
+          prepared.reason ?? "准备 vault 工作区失败",
+        ),
       );
       return {
-        status: pull.conflict ? "conflict" : "failed",
-        reason: pull.reason ?? "git pull 失败",
+        status: prepared.conflict ? "conflict" : "failed",
+        reason: prepared.reason ?? "准备 vault 工作区失败",
         deletedInbox: [],
         quarantined: [],
         agentInvoked: false,
@@ -57,6 +75,10 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     }
 
     const allPending = await listPendingInbox(layout);
+    logInfo("processor.inbox_scanned", {
+      pending: allPending.length,
+      selected: Math.min(allPending.length, options.maxPerRound),
+    });
     if (allPending.length === 0) {
       await writeStateSafe(layout, stateBody(clock, "empty", "收件箱无待处理"));
       return {
@@ -71,25 +93,44 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     const pendingInbox = allPending.slice(0, options.maxPerRound);
     const snapshotInbox = [...pendingInbox];
 
-    await agent.run({
-      vaultPath: layout.vaultPath,
-      layout,
-      maxPerRound: options.maxPerRound,
-      pendingInbox,
-    });
+    logInfo("processor.agent_started", { count: pendingInbox.length });
+    try {
+      await agent.run({
+        vaultPath: layout.vaultPath,
+        layout,
+        maxPerRound: options.maxPerRound,
+        pendingInbox,
+      });
+    } catch (error) {
+      logError("processor.agent_failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+    logInfo("processor.agent_finished", { count: pendingInbox.length });
 
-    const changes = await git.listChanges();
+    const changes = await workspace.listChanges();
     const acceptance = await acceptRound({
       layout,
       snapshotInbox,
       changes,
+    });
+    logInfo("processor.acceptance", {
+      ok: acceptance.ok,
+      ...(acceptance.ok
+        ? {
+            done: acceptance.done.length,
+            failed: acceptance.failedInboxes.length,
+            quarantine: acceptance.quarantineInboxes.length,
+          }
+        : { reason: acceptance.reason }),
     });
 
     if (!acceptance.ok) {
       // Try restore unauthorized deletes
       for (const p of acceptance.unauthorizedDeletes) {
         try {
-          await git.restoreFromHead(p);
+          await workspace.restore(p);
         } catch {
           /* best effort */
         }
@@ -114,7 +155,8 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       );
       // 失败也尽量把 attempts / 隔离 / STATE 提交进去，避免下轮丢计数
       await commitWorkingTreeBestEffort(
-        git,
+        workspace,
+        publisher,
         layout,
         `processor: failed ${acceptance.reason}`.slice(0, 200),
       );
@@ -163,9 +205,8 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       ),
     );
 
-    const finalChanges = await git.listChanges();
+    const finalChanges = await workspace.listChanges();
     for (const ch of finalChanges) {
-      const { isWhitelistedPath } = await import("../config.js");
       if (!isWhitelistedPath(ch.path, layout)) {
         await writeStateSafe(
           layout,
@@ -181,52 +222,41 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       }
     }
 
-    const pathsToAdd = unique(finalChanges.map((c) => c.path));
-    if (pathsToAdd.length > 0) {
-      await git.add(pathsToAdd);
-    }
-
     const commitMsg = buildCommitMessage(deletedInbox, quarantined, clock);
-    const committed = await git.commit(commitMsg);
-    if (!committed.ok) {
-      await writeStateSafe(
-        layout,
-        stateBody(clock, "failed", committed.reason ?? "commit 失败"),
-      );
-      return {
-        status: "failed",
-        reason: committed.reason ?? "commit 失败",
-        deletedInbox,
-        quarantined,
-        agentInvoked: true,
-      };
+    if (publisher) {
+      const pathsToPublish = unique(finalChanges.map((c) => c.path));
+      const published = await publisher.publish(pathsToPublish, commitMsg);
+      if (!published.ok) {
+        logError("processor.publish_failed", {
+          reason: published.reason,
+          conflict: published.conflict ?? false,
+        });
+        await writeStateSafe(
+          layout,
+          stateBody(
+            clock,
+            published.conflict ? "conflict" : "failed",
+            published.reason ?? "vault 发布失败",
+          ),
+        );
+        return {
+          status: published.conflict ? "conflict" : "failed",
+          reason: published.reason ?? "vault 发布失败",
+          deletedInbox,
+          quarantined,
+          agentInvoked: true,
+        };
+      }
     }
 
-    const pushed = await git.push();
-    if (!pushed.ok) {
-      await writeStateSafe(
-        layout,
-        stateBody(
-          clock,
-          pushed.conflict ? "conflict" : "failed",
-          pushed.reason ?? "push 失败",
-        ),
-      );
-      return {
-        status: pushed.conflict ? "conflict" : "failed",
-        reason: pushed.reason ?? "push 失败",
-        deletedInbox,
-        quarantined,
-        agentInvoked: true,
-      };
-    }
-
-    return {
+    const result = {
       status: "success",
       deletedInbox,
       quarantined,
       agentInvoked: true,
-    };
+    } as const;
+    logInfo("processor.round_finished", result);
+    return result;
   } finally {
     await handle.release();
   }
@@ -272,19 +302,17 @@ function unique(xs: string[]): string[] {
 }
 
 async function commitWorkingTreeBestEffort(
-  git: GitOps,
+  workspace: VaultWorkspace,
+  publisher: VaultPublisher | undefined,
   layout: ProcessorOptions["layout"],
   message: string,
 ): Promise<void> {
+  if (!publisher) return;
   try {
-    const changes = await git.listChanges();
-    const { isWhitelistedPath } = await import("../config.js");
+    const changes = await workspace.listChanges();
     const safe = changes.filter((c) => isWhitelistedPath(c.path, layout));
     if (safe.length === 0) return;
-    await git.add(safe.map((c) => c.path));
-    const committed = await git.commit(message);
-    if (!committed.ok) return;
-    await git.push();
+    await publisher.publish(safe.map((c) => c.path), message);
   } catch {
     /* 失败路径的提交是尽力而为 */
   }

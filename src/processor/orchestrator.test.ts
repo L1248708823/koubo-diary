@@ -4,7 +4,7 @@ import path from "node:path";
 import {
   createTempVault,
   createMemoryLock,
-  createFakeGit,
+  createFakeVaultAccess,
   createFakeAgent,
   fixedClock,
   seedInbox,
@@ -28,13 +28,13 @@ describe("processor orchestrator (seam 1)", () => {
     const vault = await createTempVault();
     vaults.push(vault);
     const lock = createMemoryLock();
-    const { git, captureHead } = await createFakeGit(vault.layout);
+    const { workspace, captureHead } = await createFakeVaultAccess(vault.layout);
     const clock = fixedClock();
-    return { vault, lock, git, captureHead, clock };
+    return { vault, lock, workspace, captureHead, clock };
   }
 
   it("空收件箱运行一轮：早退、不调用 agent", async () => {
-    const { vault, lock, git, clock } = await setup();
+    const { vault, lock, workspace, clock } = await setup();
     let agentCalls = 0;
     const agent: AgentRunner = {
       async run() {
@@ -44,7 +44,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,
@@ -56,7 +56,7 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("假 agent 对一条 inbox 声明 done 且日记存在：验收后删除 inbox，写回仍在", async () => {
-    const { vault, lock, git, captureHead, clock } = await setup();
+    const { vault, lock, workspace, captureHead, clock } = await setup();
     const inboxRel = await seedInbox(vault.layout, "今天想通了一件事");
     await captureHead();
 
@@ -81,7 +81,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,
@@ -95,7 +95,7 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("done 但缺 diary：验收失败，inbox 仍在", async () => {
-    const { vault, lock, git, captureHead, clock } = await setup();
+    const { vault, lock, workspace, captureHead, clock } = await setup();
     const inboxRel = await seedInbox(vault.layout, "缺日记的一条");
     await captureHead();
 
@@ -115,7 +115,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,
@@ -127,7 +127,7 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("工作树出现回执未授权的 inbox 删除：轮次失败，inbox 尽量恢复", async () => {
-    const { vault, lock, git, captureHead, clock } = await setup();
+    const { vault, lock, workspace, captureHead, clock } = await setup();
     const inboxRel = await seedInbox(vault.layout, "不该被 agent 删");
     await captureHead();
 
@@ -152,7 +152,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,
@@ -163,7 +163,7 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("失败累计至阈值：条目进入隔离区，后续普通待处理不再包含", async () => {
-    const { vault, lock, git, captureHead, clock } = await setup();
+    const { vault, lock, workspace, captureHead, clock } = await setup();
     const inboxRel = await seedInbox(vault.layout, "反复失败", { attempts: 2 });
     await captureHead();
 
@@ -184,7 +184,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,
@@ -217,7 +217,7 @@ describe("processor orchestrator (seam 1)", () => {
     // 空了应早退；若还有其它 inbox 才调 agent。这里收件箱已空。
     const result2 = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent: agent2,
       clock,
@@ -227,7 +227,7 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("收件箱超过单轮上限：本轮最多处理上限条", async () => {
-    const { vault, lock, git, captureHead, clock } = await setup();
+    const { vault, lock, workspace, captureHead, clock } = await setup();
     vault.options.maxPerRound = 2;
     for (let i = 0; i < 4; i++) {
       await seedInbox(vault.layout, `条目 ${i}`, {
@@ -264,7 +264,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,
@@ -280,10 +280,10 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("白名单外路径出现变更：整轮失败", async () => {
-    const { vault, lock, git, captureHead, clock } = await setup();
+    const { vault, lock, workspace, captureHead, clock } = await setup();
     const { controls } = await (async () => {
       // reuse git but we need controls — recreate bound to same layout
-      return createFakeGit(vault.layout).then(async (g) => {
+      return createFakeVaultAccess(vault.layout).then(async (g) => {
         // copy head from current tree
         await g.captureHead();
         return g;
@@ -293,11 +293,11 @@ describe("processor orchestrator (seam 1)", () => {
     const inboxRel = await seedInbox(vault.layout, "白名单测试");
     await captureHead();
 
-    const baseGit = git;
-    const wrappedGit = {
-      ...baseGit,
+    const baseWorkspace = workspace;
+    const wrappedWorkspace = {
+      ...baseWorkspace,
       async listChanges() {
-        const changes = await baseGit.listChanges();
+        const changes = await baseWorkspace.listChanges();
         return [...changes, { path: "secrets/token.txt", status: "A" }];
       },
     };
@@ -321,7 +321,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git: wrappedGit,
+      workspace: wrappedWorkspace,
       lock,
       agent,
       clock,
@@ -334,7 +334,7 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("回执漏报快照内条目：异常轮失败，不删任何 inbox", async () => {
-    const { vault, lock, git, captureHead, clock } = await setup();
+    const { vault, lock, workspace, captureHead, clock } = await setup();
     const a = await seedInbox(vault.layout, "会申报", {
       id: "20260729-120000-acct01",
     });
@@ -356,7 +356,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,
@@ -369,7 +369,7 @@ describe("processor orchestrator (seam 1)", () => {
   });
 
   it("锁已被占用：立即退出，不启动 agent", async () => {
-    const { vault, git, clock } = await setup();
+    const { vault, workspace, clock } = await setup();
     const lock = createMemoryLock(true);
     let agentCalls = 0;
     const agent: AgentRunner = {
@@ -380,7 +380,7 @@ describe("processor orchestrator (seam 1)", () => {
 
     const result = await runProcessorRound({
       options: vault.options,
-      git,
+      workspace,
       lock,
       agent,
       clock,

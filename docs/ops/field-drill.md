@@ -1,6 +1,6 @@
 # 处理环运维与演习清单
 
-密钥、VPS 登录、真 GitHub remote、真 Claude 凭证到位后再跑本清单。本地 `npm test` 已覆盖假 agent 契约，不依赖这些秘密。
+密钥、VPS 登录、真 GitHub remote、选定 CLI 的登录/凭证到位后再跑本清单。本地 `npm test` 已覆盖假 agent 契约，不依赖这些秘密。
 
 ## 部署前
 
@@ -8,7 +8,8 @@
 2. 复制 `.env.example` → `.env`（或 systemd `EnvironmentFile`），填：
    - `INGEST_TOKEN`（长随机串）
    - `VAULT_PATH`
-   - `CLAUDE_BIN` / 模型登录或 `ANTHROPIC_API_KEY`
+   - `AGENT_PROVIDER=codex` 或 `AGENT_PROVIDER=claude`
+   - 对应 CLI：`CODEX_BIN` / `CLAUDE_BIN`，以及该 CLI 的本机登录或凭证
    - `LOCK_PATH`、`WAKE_FLAG_PATH`（宿主机路径，**不进 git**）
 3. 确认日记/想法目录名与真实 vault 一致（`DIARY_DIR` / `IDEAS_DIR`）
 4. 捕捉端（`capture/index.html`）设置里填 Ingest URL 与同一 token（只存在设备 localStorage）

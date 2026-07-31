@@ -1,35 +1,41 @@
-/** 真 Claude Code runner；处理环通过 AgentRunner 契约与具体 CLI 解耦。 */
 import { createCliAgentRunner } from "./cli-runner.js";
 import type { AgentRunner } from "../types.js";
 
-export type ClaudeAgentOptions = {
-  /** Windows 通常填 claude.cmd；Linux/WSL 通常填 claude。 */
+export type CodexAgentOptions = {
+  /** Windows 通常填 codex.cmd；Linux/WSL 通常填 codex。 */
   bin?: string;
-  /** skill 名称。 */
   skill?: string;
-  /** 具体 Claude CLI 版本需要的额外参数。 */
   extraArgs?: string[];
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
 };
 
-export function createClaudeAgentRunner(
-  options: ClaudeAgentOptions = {},
+export function createCodexAgentRunner(
+  options: CodexAgentOptions = {},
 ): AgentRunner {
   const bin =
     options.bin ??
-    process.env.CLAUDE_BIN ??
-    (process.platform === "win32" ? "claude.cmd" : "claude");
+    process.env.CODEX_BIN ??
+    (process.platform === "win32" ? "codex.cmd" : "codex");
   const skill = options.skill ?? process.env.PROCESSOR_SKILL ?? "处理收件箱";
+
   return createCliAgentRunner({
-    provider: "Claude",
+    provider: "Codex",
     bin,
     skill,
     extraArgs: options.extraArgs ?? [],
     env: options.env,
     timeoutMs: options.timeoutMs ?? 10 * 60_000,
     buildArgs(prompt, extraArgs) {
-      return ["-p", prompt, ...extraArgs];
+      return [
+        "exec",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "-s",
+        "workspace-write",
+        ...extraArgs,
+        prompt,
+      ];
     },
   });
 }

@@ -4,13 +4,14 @@ import { pathExists, listPendingInbox } from "../vault/fs.js";
 import {
   createTempVault,
   createMemoryLock,
-  createFakeGit,
+  createFakeVaultAccess,
   createFakeAgent,
   fixedClock,
   writeDiary,
   type TempVault,
 } from "../testkit/temp-vault.js";
 import { createIngestServer, type IngestServer } from "../ingest/server.js";
+import { createLocalInboxDelivery } from "../ingest/delivery.js";
 import { runProcessorRound } from "../processor/orchestrator.js";
 import type { AgentRunner, Lock } from "../types.js";
 
@@ -33,8 +34,7 @@ describe("ingest wakes processor (seam 3)", () => {
     const vault = await createTempVault();
     vaults.push(vault);
     const lock = createMemoryLock();
-    const { git, captureHead } = await createFakeGit(vault.layout);
-    await captureHead();
+    const { workspace } = await createFakeVaultAccess(vault.layout);
     const clock = fixedClock("2026-07-29T15:30:12+08:00");
 
     const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
@@ -64,9 +64,8 @@ describe("ingest wakes processor (seam 3)", () => {
     const wakes: string[] = [];
 
     const server = await createIngestServer({
-      layout: vault.layout,
       token: "wake-token",
-      git,
+      delivery: createLocalInboxDelivery(vault.layout, clock),
       clock,
       path: "/ingest",
       host: "127.0.0.1",
@@ -76,7 +75,7 @@ describe("ingest wakes processor (seam 3)", () => {
         // 同步化：测试里直接排队跑编排（生产可写 flag / systemctl）
         roundPromise = runProcessorRound({
           options: vault.options,
-          git,
+          workspace,
           lock,
           agent,
           clock,
@@ -123,7 +122,7 @@ describe("ingest wakes processor (seam 3)", () => {
     const vault = await createTempVault();
     vaults.push(vault);
     const lock = createMemoryLock();
-    const { git, captureHead } = await createFakeGit(vault.layout);
+    const { workspace, captureHead } = await createFakeVaultAccess(vault.layout);
     const clock = fixedClock();
 
     // seed one inbox so a round has work
@@ -161,7 +160,7 @@ describe("ingest wakes processor (seam 3)", () => {
     const run = () =>
       runProcessorRound({
         options: vault.options,
-        git,
+        workspace,
         lock,
         agent: slowAgent,
         clock,

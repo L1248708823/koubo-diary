@@ -11,13 +11,14 @@ import type {
   AgentRunner,
   ChangedPath,
   Clock,
-  GitOps,
   GitResult,
   Lock,
   LockHandle,
   ProcessorOptions,
   Receipt,
   VaultLayout,
+  VaultPublisher,
+  VaultWorkspace,
 } from "../types.js";
 
 export type TempVault = {
@@ -83,13 +84,13 @@ export function createMemoryLock(
   };
 }
 
-export type FakeGitControls = {
+export type FakeVaultControls = {
   pullResult: GitResult;
   pushResult: GitResult;
   commitResult: GitResult;
   head: string;
   extraChanges: ChangedPath[];
-  /** Paths whose content we keep for restoreFromHead. */
+  /** Paths whose content we keep for workspace.restore. */
   headFiles: Map<string, string>;
   baseline: Set<string>;
 };
@@ -116,13 +117,14 @@ async function walkFiles(dir: string, base = ""): Promise<string[]> {
   return out;
 }
 
-export async function createFakeGit(layout: VaultLayout): Promise<{
-  git: GitOps;
-  controls: FakeGitControls;
+export async function createFakeVaultAccess(layout: VaultLayout): Promise<{
+  workspace: VaultWorkspace;
+  publisher: VaultPublisher;
+  controls: FakeVaultControls;
   snapshotBaseline(): Promise<void>;
   captureHead(): Promise<void>;
 }> {
-  const controls: FakeGitControls = {
+  const controls: FakeVaultControls = {
     pullResult: { ok: true },
     pushResult: { ok: true },
     commitResult: { ok: true },
@@ -148,15 +150,9 @@ export async function createFakeGit(layout: VaultLayout): Promise<{
 
   await captureHead();
 
-  const git: GitOps = {
-    async pull() {
+  const workspace: VaultWorkspace = {
+    async prepare() {
       return controls.pullResult;
-    },
-    async push() {
-      return controls.pushResult;
-    },
-    async headRev() {
-      return controls.head;
     },
     async listChanges() {
       const now = await walkFiles(layout.vaultPath);
@@ -205,17 +201,7 @@ export async function createFakeGit(layout: VaultLayout): Promise<{
       }
       return [...changes, ...controls.extraChanges];
     },
-    async add() {
-      /* no-op */
-    },
-    async commit() {
-      if (controls.commitResult.ok) {
-        controls.head = `${controls.head}-c`;
-        await captureHead();
-      }
-      return controls.commitResult;
-    },
-    async restoreFromHead(relPath: string) {
+    async restore(relPath: string) {
       const content = controls.headFiles.get(relPath);
       if (content === undefined) return;
       const abs = path.join(layout.vaultPath, relPath);
@@ -224,7 +210,16 @@ export async function createFakeGit(layout: VaultLayout): Promise<{
     },
   };
 
-  return { git, controls, snapshotBaseline, captureHead };
+  const publisher: VaultPublisher = {
+    async publish(_paths, _message) {
+      if (!controls.commitResult.ok) return controls.commitResult;
+      controls.head = `${controls.head}-c`;
+      await captureHead();
+      return controls.pushResult;
+    },
+  };
+
+  return { workspace, publisher, controls, snapshotBaseline, captureHead };
 }
 
 export function createFakeAgent(

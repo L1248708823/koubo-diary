@@ -78,18 +78,33 @@ export type ChangedPath = {
 
 export type GitResult =
   | { ok: true }
-  | { ok: false; reason: string; conflict?: boolean };
+  | {
+      ok: false;
+      reason: string;
+      conflict?: boolean;
+      /** 生产投递发布失败时，用于判断本地 inbox 是否已经进入 commit。 */
+      committed?: boolean;
+    };
 
-export type GitOps = {
-  pull(): Promise<GitResult>;
-  push(): Promise<GitResult>;
-  headRev(): Promise<string>;
-  /** Working tree changes relative to HEAD (incl. untracked). */
+export type VaultGitMode = "remote" | "local";
+
+/** 工作区层：本地和生产都需要，负责准备轮次、检查变更和恢复越权删除。 */
+export type VaultWorkspace = {
+  prepare(): Promise<GitResult>;
+  /** Working tree changes relative to the round baseline, including untracked. */
   listChanges(): Promise<ChangedPath[]>;
-  add(paths: string[]): Promise<void>;
-  commit(message: string): Promise<GitResult>;
-  /** Restore a path from HEAD (for unauthorized inbox deletes). */
-  restoreFromHead(path: string): Promise<void>;
+  /** Restore a path from the round baseline or production HEAD. */
+  restore(path: string): Promise<void>;
+};
+
+/** 发布层：只有生产 vault 才注入，本地联调不会拥有这个能力。 */
+export type VaultPublisher = {
+  publish(paths: string[], message: string): Promise<GitResult>;
+};
+
+export type VaultAccess = {
+  workspace: VaultWorkspace;
+  publisher?: VaultPublisher;
 };
 
 export type LockHandle = {

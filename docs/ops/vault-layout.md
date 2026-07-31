@@ -12,6 +12,7 @@ _inbox/_quarantine/
 _staging/
 _processor/
 想法/                 # 若尚不存在
+.claude/skills/处理收件箱/SKILL.md  # CLI agent 的只读 skill 基线
 ```
 
 日记树一般已存在：
@@ -47,6 +48,8 @@ INBOX_DIR=_inbox
 - `吾志/`、`wolai-app/`、`学习/`、`工作/`、`投资/` 等
 - 想法按年自动归档目录（v1 无）
 - 开放主题 tag 体系
+
+`.claude/skills/处理收件箱/SKILL.md` 是部署基线文件，不由 agent 在处理轮中修改。工具仓中的同名 skill 更新后，先同步到 vault 基线并单独提交，再运行处理环。
 
 ## 与本机路径
 

@@ -1,9 +1,18 @@
 import path from "node:path";
-import type { GitOps, GitResult, ChangedPath } from "../types.js";
+import type {
+  ChangedPath,
+  GitResult,
+  VaultAccess,
+  VaultPublisher,
+  VaultGitMode,
+  VaultWorkspace,
+} from "../types.js";
 import { spawn } from "node:child_process";
+import { createLocalVaultWorkspace } from "./local-vault.js";
 
 export type RealGitOptions = {
-  cwd: string;
+  /** 真实日记 vault 仓根目录，不是工具仓目录。 */
+  vaultPath: string;
   remote?: string;
 };
 
@@ -28,7 +37,10 @@ function run(
   });
 }
 
-function classifyGitFailure(stderr: string, stdout: string): GitResult {
+function classifyGitFailure(
+  stderr: string,
+  stdout: string,
+): Extract<GitResult, { ok: false }> {
   const text = `${stdout}\n${stderr}`.toLowerCase();
   const conflict =
     text.includes("conflict") ||
@@ -42,24 +54,15 @@ function classifyGitFailure(stderr: string, stdout: string): GitResult {
   };
 }
 
-export function createRealGit(opts: RealGitOptions): GitOps {
+export function createVaultWorkspace(opts: RealGitOptions): VaultWorkspace {
   const remote = opts.remote ?? "origin";
-  const cwd = opts.cwd;
+  const cwd = opts.vaultPath;
 
   return {
-    async pull(): Promise<GitResult> {
+    async prepare(): Promise<GitResult> {
       const r = await run(cwd, ["pull", "--rebase", remote]);
       if (r.code !== 0) return classifyGitFailure(r.stderr, r.stdout);
       return { ok: true };
-    },
-    async push(): Promise<GitResult> {
-      const r = await run(cwd, ["push", remote]);
-      if (r.code !== 0) return classifyGitFailure(r.stderr, r.stdout);
-      return { ok: true };
-    },
-    async headRev(): Promise<string> {
-      const r = await run(cwd, ["rev-parse", "HEAD"]);
-      return r.stdout.trim() || "UNKNOWN";
     },
     async listChanges(): Promise<ChangedPath[]> {
       const r = await run(cwd, ["status", "--porcelain", "-uall"]);
@@ -79,28 +82,58 @@ export function createRealGit(opts: RealGitOptions): GitOps {
       }
       return changes;
     },
-    async add(paths: string[]): Promise<void> {
-      if (paths.length === 0) return;
-      // Also stage deletions
-      await run(cwd, ["add", "-A", "--", ...paths]);
-    },
-    async commit(message: string): Promise<GitResult> {
-      const r = await run(cwd, ["commit", "-m", message, "--allow-empty-message"]);
-      // nothing to commit is ok-ish
-      if (r.code !== 0) {
-        if (/nothing to commit/i.test(r.stdout + r.stderr)) return { ok: true };
-        return classifyGitFailure(r.stderr, r.stdout);
-      }
-      return { ok: true };
-    },
-    async restoreFromHead(relPath: string): Promise<void> {
+    async restore(relPath: string): Promise<void> {
       await run(cwd, ["checkout", "HEAD", "--", relPath]);
     },
   };
 }
 
-export function resolveVaultGit(cwd: string, remote?: string): GitOps {
-  const opts: RealGitOptions = { cwd: path.resolve(cwd) };
+export function createVaultPublisher(opts: RealGitOptions): VaultPublisher {
+  const remote = opts.remote ?? "origin";
+  const cwd = opts.vaultPath;
+
+  return {
+    async publish(paths: string[], message: string): Promise<GitResult> {
+      if (paths.length > 0) {
+        const added = await run(cwd, ["add", "-A", "--", ...paths]);
+        if (added.code !== 0) {
+          return { ...classifyGitFailure(added.stderr, added.stdout), committed: false };
+        }
+      }
+
+      const committed = await run(cwd, [
+        "commit",
+        "-m",
+        message,
+        "--allow-empty-message",
+      ]);
+      if (committed.code !== 0 && !/nothing to commit/i.test(committed.stdout + committed.stderr)) {
+        return { ...classifyGitFailure(committed.stderr, committed.stdout), committed: false };
+      }
+
+      const pushed = await run(cwd, ["push", remote]);
+      if (pushed.code !== 0) {
+        return { ...classifyGitFailure(pushed.stderr, pushed.stdout), committed: true };
+      }
+      return { ok: true };
+    },
+  };
+}
+
+export function resolveVaultAccess(
+  vaultPath: string,
+  remote?: string,
+  mode: VaultGitMode = "remote",
+): VaultAccess {
+  const resolvedVaultPath = path.resolve(vaultPath);
+  if (mode === "local") {
+    return { workspace: createLocalVaultWorkspace(resolvedVaultPath) };
+  }
+
+  const opts: RealGitOptions = { vaultPath: resolvedVaultPath };
   if (remote !== undefined) opts.remote = remote;
-  return createRealGit(opts);
+  return {
+    workspace: createVaultWorkspace(opts),
+    publisher: createVaultPublisher(opts),
+  };
 }

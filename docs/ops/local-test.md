@@ -1,186 +1,149 @@
-# 本地启动与测试
+# 本地联调与生产执行线
 
-面向开发机（Windows / macOS / Linux）。**不依赖**真 GitHub、真 Claude、真手机；要测「页面真的送进收件箱」时起两个进程即可。
+当前实现明确分成两条执行线。两条线共用收件校验、AI runner、skill、回执验收、白名单、失败计次和隔离区规则，vault 的工作区访问方式与发布动作分开。
 
-## 0. 一次安装
+## 先做自动检查
 
-```bash
-cd /path/to/koubo-diary   # 本工具仓根目录
-npm install
+Windows PowerShell 建议使用 `npm.cmd`，避免本机执行策略拦截 `npm.ps1`：
+
+```powershell
+npm.cmd install
+npm.cmd test
+npm.cmd run typecheck
+npm.cmd run web:build
 ```
 
-确认：
+这组检查不需要真实 vault、Git remote 或 Codex 登录。
 
-```bash
-npm test
-npm run typecheck
+## 本地联调线
+
+本地线使用临时 vault 文件夹，`VAULT_GIT_MODE=local`。本地代码只做文件快照和文件写入，处理编排不接收 publisher，收件投递也不调用 pull、add、commit 或 push。
+
+```text
+捕捉端
+  → 本地 ingest
+  → 临时 vault/_inbox
+  → 同一 Node 进程排队运行 processor
+  → Codex 或 Claude 修改临时 vault
+  → 回执与白名单验收
+  → 成功删除临时 vault/_inbox 条目
 ```
 
-期望：测试全绿、`tsc` 无报错。这是日常默认门槛；改编排/收件契约后必跑。
+本地配置文件分两份：
 
-## 1. 测试分层（先选对层）
-
-| 层级 | 命令 / 动作 | 需要密钥？ | 验证什么 |
-|------|-------------|------------|----------|
-| A 契约自动测 | `npm test` | 否 | 编排验收、鉴权、唤醒、锁；临时 vault + 假 agent |
-| B 本地半集成 | 起 ingest + 静态捕捉端 | 仅本地自拟 `INGEST_TOKEN` | 浏览器真 POST 进 `_inbox/` |
-| C 假 agent 对真实目录 | 测试夹具或临时脚本 | 否（假 agent） | 指定 vault 路径上的删 inbox / 写日记语义 |
-| D 真模型 | `CLAUDE_*` + `npm run processor` | 是 | skill 口气与回执 |
-| E 上云演习 | 见 `field-drill.md` | 是 + VPS | 连倒 / 隔离 / 冲突 |
-
-本地日常：**A 必跑**；接 UI 时加 **B**；密钥与 VPS 到位后再 D/E。
-
-## 2. 层级 A：契约自动测（推荐默认）
-
-```bash
-npm test
-npm run typecheck
+```powershell
+Copy-Item .\config\local.env.example .\config\local-codex.env
+notepad .\config\local-codex.env
 ```
 
-行为说明：
-
-- Vitest 在系统临时目录建 vault，测完删除
-- `agentRunner` / `git` / 锁均可注入假实现
-- **不会**监听端口、不会 push 远程、不会读你的 Obsidian 真库
-
-失败时先看断言文案（例如「白名单外路径」「done 但缺 diary」），对照 `.scratch/processor-loop/spec.md` 的机械验收条款。
-
-## 3. 层级 B：本地半集成（页面 → 收件箱）
-
-### 3.1 准备一个「练习 vault」（不要用唯一生产库硬练）
-
-```bash
-# 示例路径，按你机器改
-mkdir -p /tmp/koubo-practice-vault
-cd /tmp/koubo-practice-vault
-git init
-git commit --allow-empty -m "init practice vault"
-mkdir -p _inbox _inbox/_quarantine _staging _processor 想法
-mkdir -p "生活/日子一天天过去"
-```
-
-Windows 可用 `D:/tmp/koubo-practice-vault` 等同路径。  
-真实 vault 路径约定见 `docs/ops/vault-layout.md`（日记在 `生活/日子一天天过去/年/月/日`，不是顶层扁 `日记/`）。
-
-### 3.2 写本工具仓的 `.env`（勿提交）
-
-在本工具仓根目录：
-
-```bash
-cp .env.example .env
-```
-
-至少填写：
+至少修改 `VAULT_PATH` 和 `LOCK_PATH`，这两个路径应指向工具仓之外的临时目录。Windows 本地配置可以写成：
 
 ```env
-INGEST_TOKEN=local-dev-only-change-me
-VAULT_PATH=/tmp/koubo-practice-vault
-INGEST_HOST=127.0.0.1
-INGEST_PORT=8787
-INGEST_PATH=/ingest
-WAKE_MODE=file
-WAKE_FLAG_PATH=/tmp/koubo-processor.wake
-LOCK_PATH=/tmp/koubo-processor.lock
-DIARY_DIR=生活/日子一天天过去
-IDEAS_DIR=想法
+VAULT_PATH=D:/path/to/koubo-diary/.temp-vaults/local/vault
+LOCK_PATH=D:/path/to/koubo-diary/.temp-vaults/local/processor.lock
+VAULT_GIT_MODE=local
+AGENT_PROVIDER=codex
+CODEX_BIN=codex.cmd
 ```
 
-说明：
+初始化和启动：
 
-- `INGEST_TOKEN` 随便长一点即可，仅本机
-- 练习 vault 若没有 remote，`git push` 可能失败：当前 ingest 在 **commit 成功、push 失败** 时会返回 5xx 并可能保留本地文件。练 B 层时可以：
-  - 给练习仓加一个「假 remote」（再开一个 bare 仓），或
-  - 后续会话我们再加 `GIT_PUSH=0` 开发开关（当前未做则优先用 bare remote）
-
-### 3.3 起收件服务
-
-```bash
-cd /path/to/koubo-diary
-# 若需加载 .env，可用你习惯的方式 export，或：
-# set -a && source .env && set +a   # bash
-npm run ingest
+```powershell
+npm.cmd run local:setup
 ```
 
-期望日志类似：
+窗口一：
 
-```json
-{ "ok": true, "listening": "http://127.0.0.1:8787/ingest", ... }
+```powershell
+npm.cmd run local:ingest
 ```
 
-健康检查（另开终端）：
+窗口二：
 
-```bash
-curl -s http://127.0.0.1:8787/health
+```powershell
+npm.cmd run local:web
 ```
 
-### 3.4 起捕捉端静态页
+浏览器打开 `http://127.0.0.1:4173/`，投递地址是 `http://127.0.0.1:8788/ingest`。本地 ingest 投递成功后会自动排队调用 processor，不需要再启动 `local:processor`。
 
-**不要**用 `file://` 直接打开 HTML（跨域与安全策略易踩坑）。
+## 本地日志
 
-```bash
-cd /path/to/koubo-diary
-npx --yes serve capture -p 4173
-# 或: python -m http.server 4173 --directory capture
+本地配置中的 `LOG_AGENT_OUTPUT=1` 会把 Codex/Claude 的标准输出和错误输出实时打印到 `local:ingest` 或 `local:processor` 终端。重点关注这些事件：
+
+```text
+ingest.delivered          已写入 inbox
+processor.queue_enqueued  已进入本地处理队列
+lock.acquired             已拿到处理锁
+processor.inbox_scanned   扫描到多少条 inbox
+agent.started             已启动 Codex/Claude，包含 bin 和工作目录
+agent.output              CLI 的实时输出
+agent.exited              CLI 退出码和耗时
+processor.acceptance      回执验收结果
+processor.round_finished  本轮完成
 ```
 
-浏览器打开：`http://127.0.0.1:4173/`
+如果手动运行 `local:processor` 返回 `status: locked`，先查看 `local:ingest` 窗口里的 `lock.busy` 日志。日志会包含锁文件中的 PID 和创建时间。确认持有锁的处理进程已经退出后，才清理陈旧的 `processor.lock`。
 
-### 3.5 在页面里配置并投递
+验收重点：
 
-1. 点 ⚙ 设置  
-2. Ingest URL：`http://127.0.0.1:8787/ingest`  
-3. Bearer：与 `.env` 的 `INGEST_TOKEN` 相同  
-4. 保存（只进本机 localStorage，不进 git）  
-5. 输入一段口播 →「送进收件箱」
+1. 页面返回 `delivered: true`，这个结果只表示进入收件箱。
+2. 临时 vault 的 `_inbox` 出现文件，随后由处理编排按验收结果清理。
+3. 日记、想法和 `_processor/last-run.json` 只出现在临时 vault。
+4. 工具仓 `git status` 不应因为本次联调产生 vault 正文改动。
+5. 本地进程日志中不应出现 Git pull、commit、push。
 
-期望：
+切换 Claude 只修改本地配置：
 
-- Toast「已投递」，输入框清空并回焦  
-- `VAULT_PATH/_inbox/` 出现 `YYYYMMDD-HHMMSS-*.md`  
-- 响应语义是 **delivered**，不是「已整理进日记」  
-- `日记/` 不应被 ingest 创建正文
-
-失败用例手测：
-
-- 错 token → 正文保留 + 错误提示  
-- 空内容 → 按钮禁用  
-- 关停 ingest 再投 → 正文保留  
-
-### 3.6 curl 代替浏览器（可选）
-
-```bash
-curl -sS -X POST http://127.0.0.1:8787/ingest \
-  -H "Authorization: Bearer local-dev-only-change-me" \
-  -H "Content-Type: application/json" \
-  -d "{\"text\":\"curl 投递一条\",\"captured_at\":\"2026-07-29T20:00:00+08:00\"}"
+```env
+AGENT_PROVIDER=claude
+CLAUDE_BIN=claude.cmd
 ```
 
-### 3.7 CORS 注意
+## 生产执行线
 
-捕捉端端口（4173）与 ingest（8787）不同源。若浏览器控制台报 CORS，说明当前 Node 收件服务尚未放行跨域。临时解法：
+生产线由 VPS 的工具仓进程和日记 vault 仓组成。`VAULT_PATH` 是唯一的 Git 工作目录。
 
-- 用同域反代（推荐上云形态），或  
-- 开发期给 ingest 加 Origin 白名单（实现期小改，见运营交接「已知缺口」）
+```text
+工具仓 /opt/koubo-diary
+  只提供 Node、捕捉端静态资源和 skill
 
-手机访问本机 ingest 时，`INGEST_HOST=127.0.0.1` **不够**；需改为局域网 IP 并处理好防火墙与 CORS，或直接上 VPS HTTPS。
+日记仓 /var/lib/koubo/vault
+  ingest：pull → 新建 _inbox → add/commit/push
+  processor：pull → agent 写工作树 → 回执验收 → 脚本删 inbox → add/commit/push
+```
 
-## 4. 层级 C / D 简述
+生产配置以 `config/production.env.example` 为模板，实际配置放 VPS 的权限受限 EnvironmentFile：
 
-- **C**：继续用 `npm test` 中的假 agent 契约；对「真实 vault 路径」干跑优先在拷贝库上做，避免污染生产日记。  
-- **D**：配置 `CLAUDE_BIN` 或 `ANTHROPIC_API_KEY` 后 `npm run processor`；skill 在 `skills/处理收件箱/`。真模型结果人工抽查口气，不进默认 CI。
+```env
+VAULT_PATH=/var/lib/koubo/vault
+VAULT_GIT_MODE=remote
+GIT_REMOTE=origin
+```
 
-## 5. 常见失败
+生产进程从工具仓启动不会改变 Git 目标。代码通过 `VAULT_PATH` 创建 vault workspace 和 publisher，工具仓路径只用于找到 Node 程序与 skill。
 
-| 现象 | 可能原因 |
-|------|----------|
-| `npm run ingest` 报缺 `VAULT_PATH` | 未 export / 未 source `.env` |
-| 401 unauthorized | token 与页面设置不一致 |
-| 投递 5xx | vault 不是 git 仓、pull/push 失败、路径不可写 |
-| 页面已投递但目录没有文件 | 看的不是同一个 `VAULT_PATH` |
-| 测试绿但页面不通 | A 与 B 本就分层；按 §3 查进程与 URL |
+生产线才验证以下行为：
 
-## 6. 停服务
+- 日记仓 pull、commit、push。
+- 日记仓远端冲突时停止本轮并保留收件箱。
+- 生产 vault 的部署 key 和 remote 权限。
+- 唤醒文件、cron、systemd 单实例锁。
 
-- 终端 `Ctrl+C` 结束 `ingest` 与 `serve`  
-- 练习 vault 可整目录删除  
-- 捕捉端设置在 localStorage，键前缀 `koubo-capture:`；可在页面「调试」里清本地列表
+本地线无法证明这些生产行为，所以它只负责联调文件写回和真实 CLI runner。生产前的手测顺序见 `docs/ops/field-drill.md` 与 `docs/ops/handoff-ops.md`。
+
+## 两个仓库的判定规则
+
+| 位置 | 用途 | 允许的 Git 操作 |
+|------|------|----------------|
+| 工具仓当前目录 | Node、捕捉端、skill、文档 | 开发者提交工具代码 |
+| `VAULT_PATH` | Obsidian 日记正文、收件箱、处理状态 | 生产 ingest 和 processor 发布 |
+| 本地临时 vault | 本机联调现场 | 不初始化 Git，不执行 Git |
+
+如果需要确认当前进程配置指向哪里，先检查：
+
+```powershell
+$env:VAULT_PATH
+git -C $env:VAULT_PATH rev-parse --show-toplevel
+```
+
+第二条只应在 `VAULT_GIT_MODE=remote` 的生产配置下执行。工具仓路径不能填入 `VAULT_PATH`，本地配置也不应指向真实 Obsidian vault。

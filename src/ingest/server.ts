@@ -1,15 +1,16 @@
 import http from "node:http";
-import type { Clock, GitOps, VaultLayout } from "../types.js";
-import { makeInboxId, writeInboxEntry } from "../vault/fs.js";
+import type { Clock } from "../types.js";
+import type { InboxDelivery } from "./delivery.js";
+import { logError, logInfo } from "../runtime/log.js";
 
 export type IngestServerOptions = {
-  layout: VaultLayout;
   token: string;
-  git: GitOps;
+  delivery: InboxDelivery;
   clock: Clock;
   host?: string;
   port?: number;
   path?: string;
+  corsOrigin?: string;
   maxTextLength?: number;
   /** 投递成功后的唤醒挂钩（写 flag / 调编排 / systemctl…） */
   onWake?: () => Promise<void> | void;
@@ -47,6 +48,16 @@ export async function createIngestServer(
       }
 
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      const corsAllowed = applyCorsHeaders(req, res, opts.corsOrigin);
+      if (req.method === "OPTIONS" && url.pathname === route) {
+        if (!corsAllowed) {
+          sendJson(res, 403, { ok: false, error: "cors origin denied" });
+          return;
+        }
+        res.writeHead(204);
+        res.end();
+        return;
+      }
       if (req.method !== "POST" || url.pathname !== route) {
         sendJson(res, 404, { ok: false, error: "not found" });
         return;
@@ -97,65 +108,34 @@ export async function createIngestServer(
         return;
       }
 
-      const pull = await opts.git.pull();
-      if (!pull.ok) {
+      const delivered = await opts.delivery.deliver({ text, capturedAt });
+      if (!delivered.ok) {
+        logError("ingest.delivery_failed", {
+          reason: delivered.reason,
+          conflict: delivered.conflict ?? false,
+        });
         sendJson(res, 503, {
           ok: false,
-          error: pull.reason ?? "git pull failed",
+          error: delivered.reason,
           delivered: false,
+          ...(delivered.conflict ? { conflict: true } : {}),
         });
         return;
       }
 
-      const { id, filename } = makeInboxId(opts.clock.now());
-      const rel = await writeInboxEntry(opts.layout, {
-        id,
-        text,
-        capturedAt,
-        source: "capture-pwa",
-        attempts: 0,
-        filename,
+      logInfo("ingest.delivered", {
+        id: delivered.id,
+        textLength: text.length,
       });
-
-      const cleanupInbox = async () => {
-        try {
-          const { rm } = await import("node:fs/promises");
-          const pathMod = await import("node:path");
-          await rm(pathMod.join(opts.layout.vaultPath, rel), { force: true });
-        } catch {
-          /* best effort：避免鉴权已过但 git 失败时留下脏文件 */
-        }
-      };
-
-      await opts.git.add([rel]);
-      const committed = await opts.git.commit(`ingest: ${id}`);
-      if (!committed.ok) {
-        await cleanupInbox();
-        sendJson(res, 503, {
-          ok: false,
-          error: committed.reason ?? "git commit failed",
-          delivered: false,
-        });
-        return;
-      }
-      const pushed = await opts.git.push();
-      if (!pushed.ok) {
-        // commit 已成功：保留文件让下轮/人工处理；客户端可凭 5xx 重试（可能重复，id 不同）
-        sendJson(res, 503, {
-          ok: false,
-          error: pushed.reason ?? "git push failed",
-          delivered: false,
-        });
-        return;
-      }
 
       try {
         await opts.onWake?.();
       } catch {
+        logError("ingest.wake_failed");
         // 唤醒失败不否定已投递；托底 cron 仍会消化
       }
 
-      sendJson(res, 200, { ok: true, id, delivered: true });
+      sendJson(res, 200, { ok: true, id: delivered.id, delivered: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "internal error";
       sendJson(res, 500, { ok: false, error: message });
@@ -181,6 +161,20 @@ export async function createIngestServer(
       });
     },
   };
+}
+
+function applyCorsHeaders(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  allowedOrigin: string | undefined,
+): boolean {
+  const origin = req.headers.origin;
+  if (!allowedOrigin || origin !== allowedOrigin) return false;
+  res.setHeader("access-control-allow-origin", allowedOrigin);
+  res.setHeader("access-control-allow-methods", "POST, OPTIONS");
+  res.setHeader("access-control-allow-headers", "Authorization, Content-Type");
+  res.setHeader("vary", "Origin");
+  return true;
 }
 
 function sendJson(

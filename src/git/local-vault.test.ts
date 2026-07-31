@@ -1,0 +1,31 @@
+import { afterEach, describe, expect, it } from "vitest";
+import path from "node:path";
+import { createLocalVaultWorkspace } from "./local-vault.js";
+import { createTempVault, writeDiary, type TempVault } from "../testkit/temp-vault.js";
+
+describe("local vault ops", () => {
+  const vaults: TempVault[] = [];
+
+  afterEach(async () => {
+    while (vaults.length) {
+      const vault = vaults.pop();
+      if (vault) await vault.cleanup();
+    }
+  });
+
+  it("只做文件快照，不需要 Git remote", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const workspace = createLocalVaultWorkspace(vault.root);
+
+    expect(await workspace.prepare()).toEqual({ ok: true });
+    await writeDiary(vault.layout, "2026-07-30.md", "本地文件模式\n");
+
+    expect(await workspace.listChanges()).toContainEqual({
+      path: path.posix.join(vault.layout.diaryDir, "2026-07-30.md"),
+      status: "A",
+    });
+    await workspace.prepare();
+    expect(await workspace.listChanges()).toEqual([]);
+  });
+});
