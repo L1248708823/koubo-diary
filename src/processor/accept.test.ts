@@ -81,4 +81,84 @@ describe("processor acceptance", () => {
       expect(result.reason).toContain("重复交代");
     }
   });
+
+  it("拒绝不同 inbox 复用同一个 idea 文件", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const firstInbox = await seedInbox(vault.layout, "第一条想法", {
+      id: "20260730-220000-first01",
+    });
+    const secondInbox = await seedInbox(vault.layout, "第二条想法", {
+      id: "20260730-220001-second1",
+    });
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [
+        {
+          inbox: firstInbox,
+          status: "done",
+          diary,
+          idea: "想法/共享.md",
+        },
+        {
+          inbox: secondInbox,
+          status: "done",
+          diary,
+          idea: "想法/共享.md",
+        },
+      ],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [firstInbox, secondInbox],
+      changes: [],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("重复使用 idea");
+    }
+  });
+
+  it("拒绝回执处理本轮快照外的 inbox", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const snapshotInbox = await seedInbox(vault.layout, "本轮条目", {
+      id: "20260730-220000-round01",
+    });
+    const outsideInbox = await seedInbox(vault.layout, "范围外条目", {
+      id: "20260730-220001-outside",
+    });
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [],
+      failed: [
+        {
+          inbox: outsideInbox,
+          status: "failed",
+          error: "不应处理",
+        },
+      ],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [snapshotInbox],
+      changes: [],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("本轮快照");
+    }
+  });
 });

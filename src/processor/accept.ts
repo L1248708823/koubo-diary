@@ -57,6 +57,22 @@ export async function acceptRound(args: {
       unauthorizedDeletes: [],
     };
   }
+  const duplicateIdea = findDuplicateIdea(receipt);
+  if (duplicateIdea) {
+    return {
+      ok: false,
+      reason: `回执重复使用 idea: ${duplicateIdea}`,
+      unauthorizedDeletes: [],
+    };
+  }
+  const outOfRoundInbox = findOutOfRoundInbox(receipt, snapshotInbox);
+  if (outOfRoundInbox) {
+    return {
+      ok: false,
+      reason: `回执项不在本轮快照: ${outOfRoundInbox}`,
+      unauthorizedDeletes: [],
+    };
+  }
 
   // Whitelist
   for (const ch of changes) {
@@ -252,15 +268,37 @@ function isValidReceiptShape(r: unknown): r is Receipt {
 
 function findDuplicateInbox(receipt: Receipt): string | null {
   const seen = new Set<string>();
-  const inboxes = [
-    ...receipt.processed.map((item) => item.inbox),
-    ...receipt.failed.map((item) => item.inbox),
-    ...receipt.quarantine.map((item) => item.inbox),
-  ];
-  for (const inbox of inboxes) {
+  for (const inbox of receiptInboxes(receipt)) {
     const normalized = normalize(inbox);
     if (seen.has(normalized)) return normalized;
     seen.add(normalized);
   }
   return null;
+}
+
+function findDuplicateIdea(receipt: Receipt): string | null {
+  const seen = new Set<string>();
+  for (const item of receipt.processed) {
+    if (item.idea === undefined) continue;
+    const normalized = normalize(item.idea);
+    if (seen.has(normalized)) return normalized;
+    seen.add(normalized);
+  }
+  return null;
+}
+
+function findOutOfRoundInbox(
+  receipt: Receipt,
+  snapshotInbox: string[],
+): string | null {
+  const snapshot = new Set(snapshotInbox.map(normalize));
+  return receiptInboxes(receipt).find((inbox) => !snapshot.has(normalize(inbox))) ?? null;
+}
+
+function receiptInboxes(receipt: Receipt): string[] {
+  return [
+    ...receipt.processed.map((item) => item.inbox),
+    ...receipt.failed.map((item) => item.inbox),
+    ...receipt.quarantine.map((item) => item.inbox),
+  ];
 }
