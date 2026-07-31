@@ -29,6 +29,7 @@ describe("CLI agent Windows 参数", () => {
         layout,
         maxPerRound: 1,
         pendingInbox: ["收件/20260730-test.md"],
+        roundId: "round-cli-test",
       },
       "处理收件箱",
     );
@@ -36,6 +37,7 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("收件/");
     expect(prompt).toContain("处理状态/last-run.json");
     expect(prompt).toContain("草稿/");
+    expect(prompt).toContain("round-cli-test");
     expect(prompt).not.toContain("_inbox");
     expect(prompt).not.toContain("_processor");
   });

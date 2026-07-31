@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type {
   AgentRunner,
   Clock,
@@ -92,14 +93,19 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
 
     const pendingInbox = allPending.slice(0, options.maxPerRound);
     const snapshotInbox = [...pendingInbox];
+    const roundId = createRoundId(clock);
 
-    logInfo("processor.agent_started", { count: pendingInbox.length });
+    logInfo("processor.agent_started", {
+      count: pendingInbox.length,
+      roundId,
+    });
     try {
       await agent.run({
         vaultPath: layout.vaultPath,
         layout,
         maxPerRound: options.maxPerRound,
         pendingInbox,
+        roundId,
       });
     } catch (error) {
       logError("processor.agent_failed", {
@@ -114,6 +120,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       layout,
       snapshotInbox,
       changes,
+      roundId,
     });
     logInfo("processor.acceptance", {
       ok: acceptance.ok,
@@ -127,8 +134,9 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     });
 
     if (!acceptance.ok) {
-      // Try restore unauthorized deletes
-      for (const p of acceptance.unauthorizedDeletes) {
+      // Restore or remove every path involved in an unsafe agent change.
+      const recoveryPaths = unique(acceptance.recoveryPaths);
+      for (const p of recoveryPaths) {
         try {
           await workspace.restore(p);
         } catch {
@@ -299,6 +307,10 @@ function buildCommitMessage(
 
 function unique(xs: string[]): string[] {
   return [...new Set(xs)];
+}
+
+function createRoundId(clock: Clock): string {
+  return `${clock.now().toISOString()}-${randomUUID()}`;
 }
 
 async function commitWorkingTreeBestEffort(

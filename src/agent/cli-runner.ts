@@ -57,6 +57,7 @@ export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
   return [
     `请按 skill「${skill}」处理本轮收件箱（若工作区有 .claude/skills/${skill}/SKILL.md 请严格遵循）。`,
     "工作目录已是 vault 根目录。",
+    `本轮 round_id：${ctx.roundId}`,
     `本轮待处理（最多 ${ctx.maxPerRound} 条，已由编排截取）：`,
     list || "（无）",
     "",

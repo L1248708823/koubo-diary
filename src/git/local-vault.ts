@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ChangedPath, GitResult, VaultWorkspace } from "../types.js";
 
@@ -74,8 +74,11 @@ export function createLocalVaultWorkspace(root: string): VaultWorkspace {
     async restore(relative: string): Promise<void> {
       const previous = await ensureBaseline();
       const content = previous.get(relative);
-      if (!content) return;
       const absolute = path.join(root, relative);
+      if (content === undefined) {
+        await rm(absolute, { force: true });
+        return;
+      }
       await mkdir(path.dirname(absolute), { recursive: true });
       await writeFile(absolute, content);
     },

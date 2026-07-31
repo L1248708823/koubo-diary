@@ -143,6 +143,7 @@ describe("ingest wakes processor (seam 3)", () => {
         const { writeReceipt } = await import("../vault/fs.js");
         await writeReceipt(ctx.layout, {
           ok: true,
+          round_id: ctx.roundId,
           round_ended_at: clock.now().toISOString(),
           processed: [
             {

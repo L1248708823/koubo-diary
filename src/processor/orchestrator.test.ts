@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { pathExists } from "../vault/fs.js";
 import path from "node:path";
 import {
@@ -12,7 +13,8 @@ import {
   type TempVault,
 } from "../testkit/temp-vault.js";
 import { runProcessorRound } from "../processor/orchestrator.js";
-import type { AgentRunner } from "../types.js";
+import { writeReceipt } from "../vault/fs.js";
+import type { AgentContext, AgentRunner } from "../types.js";
 
 describe("processor orchestrator (seam 1)", () => {
   const vaults: TempVault[] = [];
@@ -124,6 +126,239 @@ describe("processor orchestrator (seam 1)", () => {
     expect(result.status).toBe("failed");
     expect(await pathExists(path.join(vault.root, inboxRel))).toBe(true);
     expect(result.deletedInbox).toEqual([]);
+  });
+
+  it("agent 回写旧 round_id：整轮失败且保留 inbox", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "拒绝旧回执");
+    await captureHead();
+
+    let receivedRoundId = "";
+    const agent: AgentRunner = {
+      async run(ctx) {
+        receivedRoundId = (ctx as AgentContext & { roundId?: string }).roundId ?? "";
+        const diary = await writeDiary(
+          ctx.layout,
+          "2026/2026-07/2026-07-29.md",
+          "旧回执测试\n",
+        );
+        await writeReceipt(ctx.layout, {
+          ok: true,
+          round_id: "stale-round",
+          round_ended_at: "2026-07-29T12:05:00+08:00",
+          processed: [{ inbox: inboxRel, status: "done", diary }],
+          failed: [],
+          quarantine: [],
+        });
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(receivedRoundId).not.toBe("");
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("round_id");
+    expect(await pathExists(path.join(vault.root, inboxRel))).toBe(true);
+  });
+
+  it("旧 round_id 与越权写回同时出现：仍清理越权文件", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "旧回执越权组合");
+    await captureHead();
+    const nestedIdea = `${vault.layout.diaryDir}/2026/2026-07/Yan帳/想法/旧回执越权.md`;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await mkdir(path.dirname(path.join(layout.vaultPath, nestedIdea)), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(layout.vaultPath, nestedIdea),
+        "# 旧回执不应留下的文件\n",
+        "utf8",
+      );
+      const diary = await writeDiary(
+        layout,
+        "2026/2026-07/2026-07-29.md",
+        "旧回执组合测试\n",
+      );
+      return {
+        ok: true,
+        round_id: "stale-round",
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [{ inbox: pendingInbox[0]!, status: "done", diary }],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("白名单外路径");
+    expect(await pathExists(path.join(vault.root, inboxRel))).toBe(true);
+    expect(await pathExists(path.join(vault.root, nestedIdea))).toBe(false);
+  });
+
+  it("agent 新建嵌套 Yan帳 文件：整轮失败并清理越权文件", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "拒绝嵌套目录");
+    await captureHead();
+    const nestedIdea = `${vault.layout.diaryDir}/2026/2026-07/Yan帳/想法/越权.md`;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await mkdir(path.dirname(path.join(layout.vaultPath, nestedIdea)), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(layout.vaultPath, nestedIdea),
+        "# 不应写入\n",
+        "utf8",
+      );
+      const diary = await writeDiary(
+        layout,
+        "2026/2026-07/2026-07-29.md",
+        "嵌套目录测试\n",
+      );
+      return {
+        ok: true,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [{ inbox: pendingInbox[0]!, status: "done", diary }],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("白名单外路径");
+    expect(await pathExists(path.join(vault.root, inboxRel))).toBe(true);
+    expect(await pathExists(path.join(vault.root, nestedIdea))).toBe(false);
+  });
+
+  it("agent 写入隔离区：整轮失败并清理越权文件", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "隔离区只允许脚本管理");
+    await captureHead();
+    const quarantineFile = `${vault.layout.quarantineDir}/越权.md`;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeFile(
+        path.join(layout.vaultPath, quarantineFile),
+        "# 不应写入隔离区\n",
+        "utf8",
+      );
+      const diary = await writeDiary(
+        layout,
+        "2026/2026-07/2026-07-29.md",
+        "隔离区测试\n",
+      );
+      return {
+        ok: true,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [{ inbox: pendingInbox[0]!, status: "done", diary }],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(await pathExists(path.join(vault.root, inboxRel))).toBe(true);
+    expect(await pathExists(path.join(vault.root, quarantineFile))).toBe(false);
+  });
+
+  it("agent 修改 inbox 内容：恢复原文后再递增 attempts", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "必须保留的原始内容");
+    await captureHead();
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeFile(
+        path.join(layout.vaultPath, pendingInbox[0]!),
+        "---\nattempts: 0\n---\n\nagent 篡改\n",
+        "utf8",
+      );
+      return {
+        ok: false,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [],
+        failed: [{ inbox: pendingInbox[0]!, status: "failed", error: "拒绝修改" }],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    const restored = await readFile(path.join(vault.root, inboxRel), "utf8");
+    expect(result.status).toBe("failed");
+    expect(restored).toContain("必须保留的原始内容");
+    expect(restored).not.toContain("agent 篡改");
+    expect(restored).toContain("attempts: 1");
+  });
+
+  it("agent 重命名 inbox：恢复旧路径并清理新路径", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "不能移动的原文");
+    await captureHead();
+    const renamedInbox = `${vault.layout.inboxDir}/renamed.md`;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await rename(
+        path.join(layout.vaultPath, pendingInbox[0]!),
+        path.join(layout.vaultPath, renamedInbox),
+      );
+      return {
+        ok: false,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [],
+        failed: [{ inbox: pendingInbox[0]!, status: "failed", error: "拒绝移动" }],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(await pathExists(path.join(vault.root, inboxRel))).toBe(true);
+    expect(await pathExists(path.join(vault.root, renamedInbox))).toBe(false);
   });
 
   it("工作树出现回执未授权的 inbox 删除：轮次失败，inbox 尽量恢复", async () => {

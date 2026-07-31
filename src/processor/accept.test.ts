@@ -7,6 +7,7 @@ import { writeReceipt } from "../vault/fs.js";
 
 describe("processor acceptance", () => {
   const vaults: TempVault[] = [];
+  const roundId = "round-accept-test";
 
   afterEach(async () => {
     while (vaults.length) {
@@ -28,6 +29,7 @@ describe("processor acceptance", () => {
     await writeFile(path.join(vault.root, nestedIdea), "# 错误路径\n", "utf8");
     await writeReceipt(vault.layout, {
       ok: true,
+      round_id: roundId,
       round_ended_at: "2026-07-30T22:00:00+08:00",
       processed: [
         {
@@ -45,6 +47,7 @@ describe("processor acceptance", () => {
       layout: vault.layout,
       snapshotInbox: [inbox],
       changes: [{ path: diary, status: "A" }],
+      roundId,
     });
 
     expect(result.ok).toBe(false);
@@ -61,6 +64,7 @@ describe("processor acceptance", () => {
     const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
     await writeReceipt(vault.layout, {
       ok: true,
+      round_id: roundId,
       round_ended_at: "2026-07-30T22:00:00+08:00",
       processed: [
         { inbox, status: "done", diary },
@@ -74,6 +78,7 @@ describe("processor acceptance", () => {
       layout: vault.layout,
       snapshotInbox: [inbox],
       changes: [],
+      roundId,
     });
 
     expect(result.ok).toBe(false);
@@ -95,6 +100,7 @@ describe("processor acceptance", () => {
     const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
     await writeReceipt(vault.layout, {
       ok: true,
+      round_id: roundId,
       round_ended_at: "2026-07-30T22:00:00+08:00",
       processed: [
         {
@@ -118,6 +124,7 @@ describe("processor acceptance", () => {
       layout: vault.layout,
       snapshotInbox: [firstInbox, secondInbox],
       changes: [],
+      roundId,
     });
 
     expect(result.ok).toBe(false);
@@ -138,6 +145,7 @@ describe("processor acceptance", () => {
     });
     await writeReceipt(vault.layout, {
       ok: true,
+      round_id: roundId,
       round_ended_at: "2026-07-30T22:00:00+08:00",
       processed: [],
       failed: [
@@ -154,6 +162,7 @@ describe("processor acceptance", () => {
       layout: vault.layout,
       snapshotInbox: [snapshotInbox],
       changes: [],
+      roundId,
     });
 
     expect(result.ok).toBe(false);
@@ -169,6 +178,7 @@ describe("processor acceptance", () => {
     const inbox = await seedInbox(vault.layout, "不可修改");
     await writeReceipt(vault.layout, {
       ok: true,
+      round_id: roundId,
       round_ended_at: "2026-07-30T22:00:00+08:00",
       processed: [],
       failed: [{ inbox, status: "failed", error: "保留原文" }],
@@ -179,11 +189,41 @@ describe("processor acceptance", () => {
       layout: vault.layout,
       snapshotInbox: [inbox],
       changes: [{ path: inbox, status: "M" }],
+      roundId,
     });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toContain("不得修改 inbox");
+    }
+  });
+
+  it("拒绝缺少 round_id 的旧回执", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const inbox = await seedInbox(vault.layout, "缺少轮次身份");
+    await writeFile(
+      path.join(vault.root, vault.layout.processorDir, "last-run.json"),
+      JSON.stringify({
+        ok: true,
+        round_ended_at: "2026-07-30T22:00:00+08:00",
+        processed: [],
+        failed: [{ inbox, status: "failed", error: "旧格式" }],
+        quarantine: [],
+      }),
+      "utf8",
+    );
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [],
+      roundId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("回执 JSON 结构不合法");
     }
   });
 });

@@ -32,6 +32,7 @@ export type ReceiptItem =
 
 export type Receipt = {
   ok: boolean;
+  round_id: string;
   round_ended_at: string;
   processed: ReceiptItemDone[];
   failed: ReceiptItemFailed[];
@@ -73,6 +74,7 @@ export type ProcessorOptions = {
 
 export type ChangedPath = {
   path: string;
+  previousPath?: string;
   /** git status short code, e.g. 'A', 'M', 'D', '??' */
   status: string;
 };
@@ -94,7 +96,7 @@ export type VaultWorkspace = {
   prepare(): Promise<GitResult>;
   /** Working tree changes relative to the round baseline, including untracked. */
   listChanges(): Promise<ChangedPath[]>;
-  /** Restore a path from the round baseline or production HEAD. */
+  /** Restore a path from the round baseline or production HEAD; remove new paths. */
   restore(path: string): Promise<void>;
 };
 
@@ -122,6 +124,7 @@ export type AgentContext = {
   layout: VaultLayout;
   maxPerRound: number;
   pendingInbox: string[];
+  roundId: string;
 };
 
 export type AgentRunner = {

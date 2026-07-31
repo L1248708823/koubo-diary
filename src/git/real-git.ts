@@ -1,4 +1,5 @@
 import path from "node:path";
+import { rm } from "node:fs/promises";
 import type {
   ChangedPath,
   GitResult,
@@ -72,18 +73,36 @@ export function createVaultWorkspace(opts: RealGitOptions): VaultWorkspace {
       for (const line of lines) {
         const status = line.slice(0, 2).trim() || "??";
         let file = line.slice(3).trim();
+        let previousPath: string | undefined;
         // renames: "R  old -> new"
         if (file.includes(" -> ")) {
-          file = file.split(" -> ").pop()!.trim();
+          const parts = file.split(" -> ");
+          previousPath = parts[0]!.trim();
+          file = parts[parts.length - 1]!.trim();
         }
         // untracked often '?? path'
         file = file.replace(/\\/g, "/").replace(/^"|"$/g, "");
-        changes.push({ path: file, status: status.includes("D") ? "D" : status.includes("?") ? "A" : status });
+        if (previousPath !== undefined) {
+          previousPath = previousPath
+            .replace(/\\/g, "/")
+            .replace(/^"|"$/g, "");
+        }
+        changes.push({
+          path: file,
+          ...(previousPath !== undefined ? { previousPath } : {}),
+          status: status.includes("D") ? "D" : status.includes("?") ? "A" : status,
+        });
       }
       return changes;
     },
     async restore(relPath: string): Promise<void> {
-      await run(cwd, ["checkout", "HEAD", "--", relPath]);
+      if (path.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) return;
+      const tracked = await run(cwd, ["cat-file", "-e", `HEAD:${relPath}`]);
+      if (tracked.code === 0) {
+        await run(cwd, ["checkout", "HEAD", "--", relPath]);
+        return;
+      }
+      await rm(path.join(cwd, relPath), { force: true });
     },
   };
 }

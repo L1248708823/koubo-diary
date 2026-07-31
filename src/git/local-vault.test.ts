@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createLocalVaultWorkspace } from "./local-vault.js";
 import { createTempVault, writeDiary, type TempVault } from "../testkit/temp-vault.js";
@@ -32,5 +33,21 @@ describe("local vault ops", () => {
     });
     await workspace.prepare();
     expect(await workspace.listChanges()).toEqual([]);
+  });
+
+  it("恢复空文件时保留文件，不把空内容当作缺失", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const workspace = createLocalVaultWorkspace(vault.root);
+    const relative = `${vault.layout.stagingDir}/empty.md`;
+    const absolute = path.join(vault.root, relative);
+
+    await writeFile(absolute, "", "utf8");
+    await workspace.prepare();
+    await writeFile(absolute, "agent 修改\n", "utf8");
+
+    await workspace.restore(relative);
+
+    expect(await readFile(absolute, "utf8")).toBe("");
   });
 });

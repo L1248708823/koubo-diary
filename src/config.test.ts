@@ -46,6 +46,18 @@ describe("config whitelist", () => {
         layout,
       ),
     ).toBe(false);
+    expect(
+      isWhitelistedPath(
+        "生活/日子一天天过去/2026/2026-07/Yan帳/研究/简报.md",
+        layout,
+      ),
+    ).toBe(false);
+    expect(
+      isWhitelistedPath(
+        "生活/日子一天天过去/2026/2026-07/Yan帳/其他/内容.md",
+        layout,
+      ),
+    ).toBe(false);
   });
 });
 

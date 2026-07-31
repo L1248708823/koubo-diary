@@ -54,7 +54,7 @@ export function isDiaryPath(path: string, layout: VaultLayout): boolean {
   return (
     normalized.startsWith(`${diaryRoot}/`) &&
     /^\d{4}\/\d{4}-\d{2}\/\d{4}-\d{2}-\d{2}\.md$/.test(relative) &&
-    !isNestedIdeaPathInDiary(normalized, layout)
+    !isNestedLongTermPathInDiary(normalized, layout)
   );
 }
 
@@ -63,7 +63,7 @@ export function isWhitelistedPath(path: string, layout: VaultLayout): boolean {
   if (!isSafeRelativePath(normalized)) return false;
 
   // 想法目录是顶层扁平目录；日记树下同名子目录不属于合法写回位置。
-  if (isNestedIdeaPathInDiary(normalized, layout)) return false;
+  if (isNestedLongTermPathInDiary(normalized, layout)) return false;
 
   // exact dir match (e.g. empty dir marker) or under prefix
   const prefixes = whitelistPrefixes(layout);
@@ -113,13 +113,20 @@ function isSafeRelativePath(value: string): boolean {
     .some((segment) => segment === "" || segment === "." || segment === "..");
 }
 
-function isNestedIdeaPathInDiary(value: string, layout: VaultLayout): boolean {
+function isNestedLongTermPathInDiary(value: string, layout: VaultLayout): boolean {
   const diaryPrefix = `${normalizeDir(layout.diaryDir)}/`;
   if (!value.startsWith(diaryPrefix)) return false;
 
   const diarySegments = value.slice(diaryPrefix.length).split("/");
-  const ideaSegments = normalizeDir(layout.ideasDir).split("/");
-  return diarySegments.some((_, index) =>
-    ideaSegments.every((segment, offset) => diarySegments[index + offset] === segment),
+  if (diarySegments.includes("Yan帳")) return true;
+  const longTermRoots = [layout.ideasDir, layout.researchDir].map((dir) =>
+    normalizeDir(dir).split("/"),
+  );
+  return longTermRoots.some((rootSegments) =>
+    diarySegments.some((_, index) =>
+      rootSegments.every(
+        (segment, offset) => diarySegments[index + offset] === segment,
+      ),
+    ),
   );
 }

@@ -205,8 +205,11 @@ export async function createFakeVaultAccess(layout: VaultLayout): Promise<{
     },
     async restore(relPath: string) {
       const content = controls.headFiles.get(relPath);
-      if (content === undefined) return;
       const abs = path.join(layout.vaultPath, relPath);
+      if (content === undefined) {
+        await rm(abs, { force: true });
+        return;
+      }
       await mkdir(path.dirname(abs), { recursive: true });
       await writeFile(abs, content, "utf8");
     },
@@ -228,15 +231,20 @@ export function createFakeAgent(
   mutator: (ctx: {
     layout: VaultLayout;
     pendingInbox: string[];
-  }) => Promise<Receipt>,
+    roundId: string;
+  }) => Promise<Omit<Receipt, "round_id"> & { round_id?: string }>,
 ): AgentRunner {
   return {
     async run(ctx) {
       const receipt = await mutator({
         layout: ctx.layout,
         pendingInbox: ctx.pendingInbox,
+        roundId: ctx.roundId,
       });
-      await writeReceipt(ctx.layout, receipt);
+      await writeReceipt(ctx.layout, {
+        ...receipt,
+        round_id: receipt.round_id ?? ctx.roundId,
+      });
     },
   };
 }

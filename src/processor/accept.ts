@@ -21,76 +21,97 @@ export type AcceptanceOk = {
 export type AcceptanceFail = {
   ok: false;
   reason: string;
-  unauthorizedDeletes: string[];
+  /** All paths that must be restored or removed after an unsafe change. */
+  recoveryPaths: string[];
 };
 
 export type AcceptanceResult = AcceptanceOk | AcceptanceFail;
 
-function isInboxPath(p: string, layout: VaultLayout): boolean {
-  const n = p.replace(/\\/g, "/");
+function isAgentOwnedInboxPath(p: string, layout: VaultLayout): boolean {
+  const normalized = normalize(p);
   const prefix = layout.inboxDir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
-  const qprefix =
-    layout.quarantineDir.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
-  if (n.startsWith(qprefix)) return false;
-  return n.startsWith(prefix) && n.endsWith(".md");
+  return normalized.startsWith(prefix);
+}
+
+async function findRecoveryPaths(
+  layout: VaultLayout,
+  snapshotInbox: string[],
+  changes: ChangedPath[],
+): Promise<string[]> {
+  const paths: string[] = [];
+  for (const change of changes) {
+    for (const changedPath of changedPathNames(change)) {
+      if (
+        !isWhitelistedPath(changedPath, layout) ||
+        isAgentOwnedInboxPath(changedPath, layout)
+      ) {
+        paths.push(changedPath);
+      }
+    }
+  }
+
+  for (const inbox of snapshotInbox) {
+    if (!(await pathExists(path.join(layout.vaultPath, inbox)))) {
+      paths.push(inbox);
+    }
+  }
+
+  return unique(paths.map(normalize));
+}
+
+function unsafeChangeFailure(
+  layout: VaultLayout,
+  recoveryPaths: string[],
+): AcceptanceFail {
+  const inboxPath = recoveryPaths.find((p) => isAgentOwnedInboxPath(p, layout));
+  return {
+    ok: false,
+    reason: inboxPath
+      ? `agent 不得修改 inbox: ${inboxPath}`
+      : `白名单外路径变更: ${recoveryPaths[0]}`,
+    recoveryPaths,
+  };
+}
+
+function rejection(reason: string): AcceptanceFail {
+  return { ok: false, reason, recoveryPaths: [] };
 }
 
 export async function acceptRound(args: {
   layout: VaultLayout;
   snapshotInbox: string[];
   changes: ChangedPath[];
+  roundId: string;
 }): Promise<AcceptanceResult> {
-  const { layout, snapshotInbox, changes } = args;
+  const { layout, snapshotInbox, changes, roundId } = args;
+  const recoveryPaths = await findRecoveryPaths(layout, snapshotInbox, changes);
+  if (recoveryPaths.length > 0) {
+    return unsafeChangeFailure(layout, recoveryPaths);
+  }
+
   const rawReceipt = await readReceipt(layout);
   if (!rawReceipt) {
-    return { ok: false, reason: "缺少回执 last-run.json", unauthorizedDeletes: [] };
+    return rejection("缺少回执 last-run.json");
   }
   if (!isValidReceiptShape(rawReceipt)) {
-    return { ok: false, reason: "回执 JSON 结构不合法", unauthorizedDeletes: [] };
+    return rejection("回执 JSON 结构不合法");
   }
   const receipt: Receipt = rawReceipt;
+  if (receipt.round_id !== roundId) {
+    return rejection(`回执 round_id 不匹配: ${receipt.round_id}`);
+  }
   const duplicateInbox = findDuplicateInbox(receipt);
   if (duplicateInbox) {
-    return {
-      ok: false,
-      reason: `回执重复交代 inbox: ${duplicateInbox}`,
-      unauthorizedDeletes: [],
-    };
+    return rejection(`回执重复交代 inbox: ${duplicateInbox}`);
   }
   const duplicateIdea = findDuplicateIdea(receipt);
   if (duplicateIdea) {
-    return {
-      ok: false,
-      reason: `回执重复使用 idea: ${duplicateIdea}`,
-      unauthorizedDeletes: [],
-    };
+    return rejection(`回执重复使用 idea: ${duplicateIdea}`);
   }
   const snapshotSet = new Set(snapshotInbox.map(normalize));
   const outOfRoundInbox = findOutOfRoundInbox(receipt, snapshotSet);
   if (outOfRoundInbox) {
-    return {
-      ok: false,
-      reason: `回执项不在本轮快照: ${outOfRoundInbox}`,
-      unauthorizedDeletes: [],
-    };
-  }
-
-  // Whitelist
-  for (const ch of changes) {
-    if (!isWhitelistedPath(ch.path, layout)) {
-      return {
-        ok: false,
-        reason: `白名单外路径变更: ${ch.path}`,
-        unauthorizedDeletes: [],
-      };
-    }
-    if (isInboxPath(ch.path, layout) && ch.status !== "D") {
-      return {
-        ok: false,
-        reason: `agent 不得修改 inbox: ${ch.path}`,
-        unauthorizedDeletes: [],
-      };
-    }
+    return rejection(`回执项不在本轮快照: ${outOfRoundInbox}`);
   }
 
   const declaredDone = new Set(
@@ -102,93 +123,37 @@ export async function acceptRound(args: {
   const declaredQuarantine = new Set(
     receipt.quarantine.map((p) => normalize(p.inbox)),
   );
-  // Agent 不得删除 inbox；删除由编排脚本在验收通过后执行。
-  const unauthorizedDeletes: string[] = [];
-  for (const ch of changes) {
-    if (ch.status !== "D") continue;
-    if (!isInboxPath(ch.path, layout)) continue;
-    const n = normalize(ch.path);
-    if (!unauthorizedDeletes.includes(n)) {
-      unauthorizedDeletes.push(n);
-    }
-  }
-  // Agent 删除但 diff 未显式报告时也必须恢复。
-  for (const inbox of snapshotInbox) {
-    const n = normalize(inbox);
-    const abs = path.join(layout.vaultPath, inbox);
-    const exists = await pathExists(abs);
-    if (!exists) {
-      if (!unauthorizedDeletes.includes(n)) unauthorizedDeletes.push(n);
-    }
-  }
-
-  if (unauthorizedDeletes.length > 0) {
-    return {
-      ok: false,
-      reason: `回执未授权的 inbox 删除: ${unauthorizedDeletes.join(", ")}`,
-      unauthorizedDeletes,
-    };
-  }
-
   // done consistency
   for (const item of receipt.processed) {
     if (item.status !== "done") {
-      return { ok: false, reason: "processed 中存在非 done 状态", unauthorizedDeletes: [] };
+      return rejection("processed 中存在非 done 状态");
     }
     if (typeof item.diary !== "string" || !item.diary) {
-      return {
-        ok: false,
-        reason: `done 缺 diary: ${item.inbox}`,
-        unauthorizedDeletes: [],
-      };
+      return rejection(`done 缺 diary: ${item.inbox}`);
     }
     if (!isDiaryPath(item.diary, layout)) {
-      return {
-        ok: false,
-        reason: `diary 路径必须位于 ${layout.diaryDir}/ 下: ${item.diary}`,
-        unauthorizedDeletes: [],
-      };
+      return rejection(`diary 路径必须位于 ${layout.diaryDir}/ 下: ${item.diary}`);
     }
     const diaryAbs = path.join(layout.vaultPath, item.diary);
     if (!(await pathExists(diaryAbs))) {
-      return {
-        ok: false,
-        reason: `done 但缺 diary 文件: ${item.diary}`,
-        unauthorizedDeletes: [],
-      };
+      return rejection(`done 但缺 diary 文件: ${item.diary}`);
     }
     if (item.idea !== undefined) {
       if (!isIdeaPath(item.idea, layout)) {
-        return {
-          ok: false,
-          reason: `idea 路径必须是 ${layout.ideasDir}/文件名.md: ${item.idea}`,
-          unauthorizedDeletes: [],
-        };
+        return rejection(`idea 路径必须是 ${layout.ideasDir}/文件名.md: ${item.idea}`);
       }
       const ideaAbs = path.join(layout.vaultPath, item.idea);
       if (!(await pathExists(ideaAbs))) {
-        return {
-          ok: false,
-          reason: `done 声明了 idea 但文件不存在: ${item.idea}`,
-          unauthorizedDeletes: [],
-        };
+        return rejection(`done 声明了 idea 但文件不存在: ${item.idea}`);
       }
     }
     // inbox must still exist pre-script-delete
     const inboxAbs = path.join(layout.vaultPath, item.inbox);
     if (!(await pathExists(inboxAbs))) {
-      return {
-        ok: false,
-        reason: `done 项的 inbox 在脚本删除前已不存在: ${item.inbox}`,
-        unauthorizedDeletes: [],
-      };
+      return rejection(`done 项的 inbox 在脚本删除前已不存在: ${item.inbox}`);
     }
     if (!snapshotSet.has(normalize(item.inbox))) {
-      return {
-        ok: false,
-        reason: `done 项不在跑前快照中: ${item.inbox}`,
-        unauthorizedDeletes: [],
-      };
+      return rejection(`done 项不在跑前快照中: ${item.inbox}`);
     }
   }
 
@@ -196,11 +161,7 @@ export async function acceptRound(args: {
   for (const item of receipt.failed) {
     const abs = path.join(layout.vaultPath, item.inbox);
     if (!(await pathExists(abs))) {
-      return {
-        ok: false,
-        reason: `failed 项 inbox 不应被删除: ${item.inbox}`,
-        unauthorizedDeletes: [],
-      };
+      return rejection(`failed 项 inbox 不应被删除: ${item.inbox}`);
     }
   }
 
@@ -214,11 +175,7 @@ export async function acceptRound(args: {
     .map(normalize)
     .filter((p) => !accounted.has(p));
   if (unaccounted.length > 0) {
-    return {
-      ok: false,
-      reason: `仍有待处理未在回执交代: ${unaccounted.join(", ")}`,
-      unauthorizedDeletes: [],
-    };
+    return rejection(`仍有待处理未在回执交代: ${unaccounted.join(", ")}`);
   }
 
   return {
@@ -233,10 +190,21 @@ function normalize(p: string): string {
   return p.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
 }
 
+function changedPathNames(change: ChangedPath): string[] {
+  return change.previousPath === undefined
+    ? [change.path]
+    : [change.path, change.previousPath];
+}
+
+function unique(paths: string[]): string[] {
+  return [...new Set(paths)];
+}
+
 function isValidReceiptShape(r: unknown): r is Receipt {
   if (!r || typeof r !== "object") return false;
   const obj = r as Record<string, unknown>;
   if (typeof obj.ok !== "boolean") return false;
+  if (typeof obj.round_id !== "string" || obj.round_id.length === 0) return false;
   if (typeof obj.round_ended_at !== "string") return false;
   if (!Array.isArray(obj.processed) || !Array.isArray(obj.failed) || !Array.isArray(obj.quarantine)) {
     return false;
