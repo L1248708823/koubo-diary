@@ -2,6 +2,42 @@
 
 export type ReceiptStatus = "done" | "failed" | "quarantine";
 
+export type ResearchTaskStatus =
+  | "pending"
+  | "running"
+  | "partial"
+  | "blocked"
+  | "complete";
+
+export type ResearchTask = {
+  task_id: string;
+  source_diary?: string;
+  source_idea?: string;
+  question: string;
+  status: ResearchTaskStatus;
+  created_at: string;
+  updated_at: string;
+  brief?: string;
+  last_error?: string;
+};
+
+export type ResearchRunnerContext = {
+  vaultPath: string;
+  layout: VaultLayout;
+  task: ResearchTask;
+  now: Date;
+};
+
+export type ResearchRunnerResult = {
+  status: Exclude<ResearchTaskStatus, "pending" | "running">;
+  brief?: string;
+  lastError?: string;
+};
+
+export type ResearchRunner = {
+  run(ctx: ResearchRunnerContext): Promise<ResearchRunnerResult>;
+};
+
 export type ReceiptItemDone = {
   inbox: string;
   status: "done";
@@ -53,6 +89,9 @@ export type RoundResult = {
   deletedInbox: string[];
   quarantined: string[];
   agentInvoked: boolean;
+  progressed: boolean;
+  researchProcessed: number;
+  researchPending: number;
 };
 
 export type VaultLayout = {
@@ -70,6 +109,7 @@ export type ProcessorOptions = {
   layout: VaultLayout;
   maxPerRound: number;
   maxAttempts: number;
+  maxResearchPerRound: number;
 };
 
 export type ChangedPath = {

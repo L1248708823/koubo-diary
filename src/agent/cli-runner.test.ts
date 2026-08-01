@@ -36,6 +36,8 @@ describe("CLI agent Windows 参数", () => {
 
     expect(prompt).toContain("收件/");
     expect(prompt).toContain("处理状态/last-run.json");
+    expect(prompt).toContain("研究任务状态：处理状态/research-tasks.json");
+    expect(prompt).toContain("待查登记研究任务");
     expect(prompt).toContain("草稿/");
     expect(prompt).toContain("round-cli-test");
     expect(prompt).not.toContain("_inbox");

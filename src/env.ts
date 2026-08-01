@@ -41,6 +41,7 @@ export function loadProcessorOptionsFromEnv(): ProcessorOptions {
     layout: loadLayoutFromEnv(),
     maxPerRound: envInt("MAX_PER_ROUND", 10),
     maxAttempts: envInt("MAX_ATTEMPTS", 3),
+    maxResearchPerRound: envInt("MAX_RESEARCH_PER_ROUND", 5),
   };
 }
 

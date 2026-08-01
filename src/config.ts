@@ -19,6 +19,7 @@ export function defaultProcessorOptions(vaultPath: string): ProcessorOptions {
     layout: defaultLayout(vaultPath),
     maxPerRound: 10,
     maxAttempts: 3,
+    maxResearchPerRound: 5,
   };
 }
 

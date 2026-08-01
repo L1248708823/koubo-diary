@@ -3,6 +3,7 @@ import {
   loadAgentConfigFromEnv,
   loadIngestConfigFromEnv,
   loadLayoutFromEnv,
+  loadProcessorOptionsFromEnv,
 } from "./env.js";
 
 describe("agent provider config", () => {
@@ -63,5 +64,13 @@ describe("agent provider config", () => {
       ideasDir: "Yan帳/想法",
       researchDir: "Yan帳/研究",
     });
+  });
+
+  it("读取独立的研究任务单轮上限", () => {
+    vi.stubEnv("VAULT_PATH", "D:/vault");
+    vi.stubEnv("MAX_PER_ROUND", "10");
+    vi.stubEnv("MAX_RESEARCH_PER_ROUND", "2");
+
+    expect(loadProcessorOptionsFromEnv().maxResearchPerRound).toBe(2);
   });
 });

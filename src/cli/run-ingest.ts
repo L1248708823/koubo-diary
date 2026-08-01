@@ -17,6 +17,7 @@ import { resolveVaultAccess } from "../git/real-git.js";
 import { createClaudeAgentRunner } from "../agent/claude-runner.js";
 import { createCodexAgentRunner } from "../agent/codex-runner.js";
 import { runProcessorRound } from "../processor/orchestrator.js";
+import { createMergedProcessorQueue } from "../processor/queue.js";
 import { createFileLock, touchWakeFlag } from "../runtime/lock.js";
 import type { AgentRunner } from "../types.js";
 import { createIngestServer } from "../ingest/server.js";
@@ -24,7 +25,11 @@ import {
   createLocalInboxDelivery,
   createRemoteInboxDelivery,
 } from "../ingest/delivery.js";
-import { ensureVaultDirs } from "../vault/fs.js";
+import {
+  countPendingResearchTasks,
+  countRunnableResearchTasks,
+} from "../research/tasks.js";
+import { ensureVaultDirs, listPendingInbox } from "../vault/fs.js";
 import { logError, logInfo } from "../runtime/log.js";
 
 async function main(): Promise<void> {
@@ -42,8 +47,9 @@ async function main(): Promise<void> {
       )
     : createLocalInboxDelivery(layout, clock);
 
-  let queue = Promise.resolve();
-  let runLocalProcessor: (() => Promise<void>) | undefined;
+  let localProcessorQueue:
+    | ReturnType<typeof createMergedProcessorQueue>
+    | undefined;
   if (cfg.gitMode === "local") {
     const processorOptions = loadProcessorOptionsFromEnv();
     const agentConfig = loadAgentConfigFromEnv();
@@ -53,19 +59,42 @@ async function main(): Promise<void> {
         : createClaudeAgentRunner(agentConfig);
     const lock = createFileLock(cfg.lockPath);
 
-    runLocalProcessor = async () => {
-      logInfo("processor.queue_started", { vaultPath: layout.vaultPath });
+    const runLocalProcessor = async (retryResearch = false) => {
       const result = await runProcessorRound({
         options: processorOptions,
         workspace: access.workspace,
         ...(access.publisher ? { publisher: access.publisher } : {}),
         lock,
         agent,
+        retryFailedResearch: retryResearch,
         clock,
       });
       console.log(JSON.stringify({ localProcessor: result }, null, 2));
-      logInfo("processor.queue_finished", { status: result.status });
+      return {
+        status: result.status,
+        progressed: result.progressed,
+      };
     };
+
+    localProcessorQueue = createMergedProcessorQueue({
+      label: "local-ingest",
+      run: runLocalProcessor,
+      hasWork: async (includeRetryableResearch = false) => {
+        const inboxPending = (await listPendingInbox(layout)).length > 0;
+        let researchPending = false;
+        try {
+          researchPending =
+            (await (includeRetryableResearch
+              ? countRunnableResearchTasks(layout)
+              : countPendingResearchTasks(layout))) > 0;
+        } catch (error) {
+          logError("processor.queue_work_scan_failed", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return inboxPending || researchPending;
+      },
+    });
   }
 
   const server = await createIngestServer({
@@ -78,13 +107,7 @@ async function main(): Promise<void> {
     ...(cfg.corsOrigin ? { corsOrigin: cfg.corsOrigin } : {}),
     onWake: async () => {
       if (cfg.gitMode === "local") {
-        if (!runLocalProcessor) return;
-        logInfo("processor.queue_enqueued", { vaultPath: layout.vaultPath });
-        queue = queue.then(runLocalProcessor).catch((err) => {
-          logError("processor.queue_failed", {
-            message: err instanceof Error ? err.message : String(err),
-          });
-        });
+        localProcessorQueue?.enqueue();
         return;
       }
       if (cfg.wakeMode === "none") return;

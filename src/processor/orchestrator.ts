@@ -1,10 +1,18 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import type {
   AgentRunner,
   Clock,
   Lock,
   ProcessorOptions,
+  ResearchRunner,
   RoundResult,
   VaultPublisher,
   VaultWorkspace,
@@ -20,6 +28,12 @@ import {
 import { acceptRound } from "./accept.js";
 import { isWhitelistedPath } from "../config.js";
 import { logError, logInfo } from "../runtime/log.js";
+import {
+  researchDetail,
+  runResearchStage,
+  safeRunnableResearchCount,
+  safePendingResearchCount,
+} from "../research/stage.js";
 
 export type ProcessorDeps = {
   options: ProcessorOptions;
@@ -27,11 +41,15 @@ export type ProcessorDeps = {
   publisher?: VaultPublisher;
   lock: Lock;
   agent: AgentRunner;
+  researchRunner?: ResearchRunner;
+  /** 仅新唤醒或直接调用时重试 partial/blocked 研究任务。 */
+  retryFailedResearch?: boolean;
   clock: Clock;
 };
 
 export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResult> {
   const { options, workspace, publisher, lock, agent, clock } = deps;
+  const retryFailedResearch = deps.retryFailedResearch ?? true;
   const layout = options.layout;
   logInfo("processor.round_started", {
     vaultPath: layout.vaultPath,
@@ -48,6 +66,9 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       deletedInbox: [],
       quarantined: [],
       agentInvoked: false,
+      progressed: false,
+      researchProcessed: 0,
+      researchPending: 0,
     };
   }
 
@@ -64,6 +85,10 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
           clock,
           prepared.conflict ? "conflict" : "failed",
           prepared.reason ?? "准备 vault 工作区失败",
+          {
+            phase: "prepare",
+            lastError: prepared.reason ?? "准备 vault 工作区失败",
+          },
         ),
       );
       return {
@@ -72,29 +97,184 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
         deletedInbox: [],
         quarantined: [],
         agentInvoked: false,
+        progressed: false,
+        researchProcessed: 0,
+        researchPending: 0,
       };
     }
 
     const allPending = await listPendingInbox(layout);
+    const researchPendingBefore = await safePendingResearchCount(layout);
+    const researchRunnableBefore = await safeRunnableResearchCount(layout);
+    if (
+      researchPendingBefore === undefined ||
+      researchRunnableBefore === undefined
+    ) {
+      const reason = "研究任务状态不可用，已停止本轮";
+      await writeStateSafe(
+        layout,
+        stateBody(clock, "failed", reason, {
+          phase: "research",
+          inboxPending: allPending.length,
+          lastError: reason,
+        }),
+      );
+      return {
+        status: "failed",
+        reason,
+        deletedInbox: [],
+        quarantined: [],
+        agentInvoked: false,
+        progressed: false,
+        researchProcessed: 0,
+        researchPending: 0,
+      };
+    }
     logInfo("processor.inbox_scanned", {
       pending: allPending.length,
       selected: Math.min(allPending.length, options.maxPerRound),
     });
     if (allPending.length === 0) {
-      await writeStateSafe(layout, stateBody(clock, "empty", "收件箱无待处理"));
+      if (deps.researchRunner && researchRunnableBefore > 0) {
+        const researchInboxSnapshot = await snapshotInbox(layout);
+        const research = await runResearchStage({
+          layout,
+          maxResearchPerRound: options.maxResearchPerRound,
+          runner: deps.researchRunner,
+          clock,
+          retryFailedResearch,
+        });
+        const inboxSafetyError = await verifyResearchInboxUnchanged(
+          layout,
+          researchInboxSnapshot,
+        );
+        const status = research.error ? "failed" : "success";
+        const detail = research.error
+          ? research.error
+          : researchDetail(research);
+        if (inboxSafetyError) {
+          await writeStateSafe(
+            layout,
+            stateBody(clock, "failed", inboxSafetyError, {
+              phase: "research",
+              inboxPending: 0,
+              researchPending: research.pending,
+              lastError: inboxSafetyError,
+            }),
+          );
+          return {
+            status: "failed",
+            reason: inboxSafetyError,
+            deletedInbox: [],
+            quarantined: [],
+            agentInvoked: false,
+            progressed: research.progressed,
+            researchProcessed: research.processed,
+            researchPending: research.pending,
+          };
+        }
+        await writeStateSafe(
+          layout,
+          stateBody(clock, status, detail, {
+            phase: "research",
+            inboxPending: 0,
+            researchPending: research.pending,
+            ...(research.error ? { lastError: research.error } : {}),
+          }),
+        );
+        const finalChanges = await workspace.listChanges();
+        const unauthorized = findUnauthorizedChange(finalChanges, layout);
+        if (unauthorized) {
+          await restoreUnauthorizedChanges(workspace, finalChanges, layout);
+          await writeStateSafe(
+            layout,
+            stateBody(clock, "failed", unauthorized, {
+              phase: "publish",
+              inboxPending: 0,
+              researchPending: research.pending,
+              lastError: unauthorized,
+            }),
+          );
+          return {
+            status: "failed",
+            reason: unauthorized,
+            deletedInbox: [],
+            quarantined: [],
+            agentInvoked: false,
+            progressed: research.progressed,
+            researchProcessed: research.processed,
+            researchPending: research.pending,
+          };
+        }
+        const published = await publishChanges(
+          publisher,
+          finalChanges,
+          buildCommitMessage([], [], clock),
+          layout,
+          clock,
+        );
+        if (published) {
+          return {
+            status: published.status,
+            reason: published.reason,
+            deletedInbox: [],
+            quarantined: [],
+            agentInvoked: false,
+            progressed: research.progressed,
+            researchProcessed: research.processed,
+            researchPending: research.pending,
+          };
+        }
+        if (research.error) {
+          return {
+            status: "failed",
+            reason: research.error,
+            deletedInbox: [],
+            quarantined: [],
+            agentInvoked: false,
+            progressed: research.progressed,
+            researchProcessed: research.processed,
+            researchPending: research.pending,
+          };
+        }
+        const result: RoundResult = {
+          status: "success",
+          deletedInbox: [],
+          quarantined: [],
+          agentInvoked: false,
+          progressed: research.progressed,
+          researchProcessed: research.processed,
+          researchPending: research.pending,
+        } as const;
+        logInfo("processor.round_finished", result);
+        return result;
+      }
+
+      await writeStateSafe(
+        layout,
+        stateBody(clock, "empty", "收件箱无待处理", {
+          phase: "idle",
+          inboxPending: 0,
+          researchPending: researchRunnableBefore,
+        }),
+      );
       return {
         status: "empty",
         reason: "收件箱无待处理",
         deletedInbox: [],
         quarantined: [],
         agentInvoked: false,
+        progressed: false,
+        researchProcessed: 0,
+        researchPending: researchPendingBefore,
       };
     }
 
     const pendingInbox = allPending.slice(0, options.maxPerRound);
-    const snapshotInbox = [...pendingInbox];
+    const snapshotInboxPaths = [...pendingInbox];
     const roundId = createRoundId(clock);
 
+    const agentStartedAt = Date.now();
     logInfo("processor.agent_started", {
       count: pendingInbox.length,
       roundId,
@@ -113,12 +293,15 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       });
       throw error;
     }
-    logInfo("processor.agent_finished", { count: pendingInbox.length });
+    logInfo("processor.agent_finished", {
+      count: pendingInbox.length,
+      durationMs: Date.now() - agentStartedAt,
+    });
 
     const changes = await workspace.listChanges();
     const acceptance = await acceptRound({
       layout,
-      snapshotInbox,
+      snapshotInbox: snapshotInboxPaths,
       changes,
       roundId,
     });
@@ -145,7 +328,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       }
       // 验收失败：不删 inbox；对快照内仍在的条目 attempts+1，触顶则隔离
       const quarantinedOnFail: string[] = [];
-      for (const inbox of snapshotInbox) {
+      for (const inbox of snapshotInboxPaths) {
         if (!(await pathExists(path.join(layout.vaultPath, inbox)))) continue;
         try {
           const attempts = await bumpInboxAttempts(layout, inbox);
@@ -159,7 +342,12 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       }
       await writeStateSafe(
         layout,
-        stateBody(clock, "failed", acceptance.reason),
+        stateBody(clock, "failed", acceptance.reason, {
+          phase: "content",
+          inboxPending: (await listPendingInbox(layout)).length,
+          researchPending: researchPendingBefore,
+          lastError: acceptance.reason,
+        }),
       );
       // 失败也尽量把 attempts / 隔离 / STATE 提交进去，避免下轮丢计数
       await commitWorkingTreeBestEffort(
@@ -174,6 +362,9 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
         deletedInbox: [],
         quarantined: quarantinedOnFail,
         agentInvoked: true,
+        progressed: false,
+        researchProcessed: 0,
+        researchPending: researchPendingBefore,
       };
     }
 
@@ -204,57 +395,106 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       deletedInbox.push(item.inbox);
     }
 
+    const researchInboxSnapshot = await snapshotInbox(layout);
+    const research = await runResearchStage({
+      layout,
+      maxResearchPerRound: options.maxResearchPerRound,
+      runner: deps.researchRunner,
+      clock,
+      retryFailedResearch,
+    });
+    const inboxSafetyError = await verifyResearchInboxUnchanged(
+      layout,
+      researchInboxSnapshot,
+    );
+    const contentProgressed = deletedInbox.length > 0 || quarantined.length > 0;
+    const roundProgressed = contentProgressed || research.progressed;
+    const roundStatus = research.error ? "failed" : "success";
+    const roundDetail = research.error
+      ? research.error
+      : `done=${deletedInbox.length} quarantine=${quarantined.length} ${researchDetail(research)}`;
+
     await writeStateSafe(
       layout,
-      stateBody(
-        clock,
-        "success",
-        `done=${deletedInbox.length} quarantine=${quarantined.length}`,
-      ),
+      stateBody(clock, inboxSafetyError ? "failed" : roundStatus, roundDetail, {
+        phase: "research",
+        inboxPending: (await listPendingInbox(layout)).length,
+        researchPending: research.pending,
+        ...(inboxSafetyError || research.error
+          ? { lastError: inboxSafetyError ?? research.error }
+          : {}),
+      }),
     );
 
-    const finalChanges = await workspace.listChanges();
-    for (const ch of finalChanges) {
-      if (!isWhitelistedPath(ch.path, layout)) {
-        await writeStateSafe(
-          layout,
-          stateBody(clock, "failed", `提交前发现白名单外路径: ${ch.path}`),
-        );
-        return {
-          status: "failed",
-          reason: `白名单外路径变更: ${ch.path}`,
-          deletedInbox: [],
-          quarantined,
-          agentInvoked: true,
-        };
-      }
+    if (inboxSafetyError) {
+      return {
+        status: "failed",
+        reason: inboxSafetyError,
+        deletedInbox: [],
+        quarantined,
+        agentInvoked: true,
+        progressed: roundProgressed,
+        researchProcessed: research.processed,
+        researchPending: research.pending,
+      };
     }
 
-    const commitMsg = buildCommitMessage(deletedInbox, quarantined, clock);
-    if (publisher) {
-      const pathsToPublish = unique(finalChanges.map((c) => c.path));
-      const published = await publisher.publish(pathsToPublish, commitMsg);
-      if (!published.ok) {
-        logError("processor.publish_failed", {
-          reason: published.reason,
-          conflict: published.conflict ?? false,
-        });
-        await writeStateSafe(
-          layout,
-          stateBody(
-            clock,
-            published.conflict ? "conflict" : "failed",
-            published.reason ?? "vault 发布失败",
-          ),
-        );
-        return {
-          status: published.conflict ? "conflict" : "failed",
-          reason: published.reason ?? "vault 发布失败",
-          deletedInbox,
-          quarantined,
-          agentInvoked: true,
-        };
-      }
+    const finalChanges = await workspace.listChanges();
+    const unauthorized = findUnauthorizedChange(finalChanges, layout);
+    if (unauthorized) {
+      await restoreUnauthorizedChanges(workspace, finalChanges, layout);
+      await writeStateSafe(
+        layout,
+        stateBody(clock, "failed", unauthorized, {
+          phase: "publish",
+          inboxPending: (await listPendingInbox(layout)).length,
+          researchPending: research.pending,
+          lastError: unauthorized,
+        }),
+      );
+      return {
+        status: "failed",
+        reason: unauthorized,
+        deletedInbox: [],
+        quarantined,
+        agentInvoked: true,
+        progressed: roundProgressed,
+        researchProcessed: research.processed,
+        researchPending: research.pending,
+      };
+    }
+
+    const published = await publishChanges(
+      publisher,
+      finalChanges,
+      buildCommitMessage(deletedInbox, quarantined, clock),
+      layout,
+      clock,
+    );
+    if (published) {
+      return {
+        status: published.status,
+        reason: published.reason,
+        deletedInbox,
+        quarantined,
+        agentInvoked: true,
+        progressed: roundProgressed,
+        researchProcessed: research.processed,
+        researchPending: research.pending,
+      };
+    }
+
+    if (research.error) {
+      return {
+        status: "failed",
+        reason: research.error,
+        deletedInbox,
+        quarantined,
+        agentInvoked: true,
+        progressed: roundProgressed,
+        researchProcessed: research.processed,
+        researchPending: research.pending,
+      };
     }
 
     const result = {
@@ -262,6 +502,9 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       deletedInbox,
       quarantined,
       agentInvoked: true,
+      progressed: roundProgressed,
+      researchProcessed: research.processed,
+      researchPending: research.pending,
     } as const;
     logInfo("processor.round_finished", result);
     return result;
@@ -274,6 +517,12 @@ function stateBody(
   clock: Clock,
   status: string,
   detail: string,
+  meta: {
+    phase?: string;
+    inboxPending?: number;
+    researchPending?: number;
+    lastError?: string;
+  } = {},
 ): string {
   const now = clock.now().toISOString();
   return [
@@ -281,6 +530,10 @@ function stateBody(
     "",
     `- updated_at: ${now}`,
     `- status: ${status}`,
+    `- phase: ${meta.phase ?? "unknown"}`,
+    `- inbox_pending: ${meta.inboxPending ?? "unknown"}`,
+    `- research_pending: ${meta.researchPending ?? "unknown"}`,
+    `- last_error: ${meta.lastError ?? "none"}`,
     `- detail: ${detail}`,
     "",
   ].join("\n");
@@ -309,8 +562,197 @@ function unique(xs: string[]): string[] {
   return [...new Set(xs)];
 }
 
+function changedPathNames(change: {
+  path: string;
+  previousPath?: string;
+}): string[] {
+  return change.previousPath === undefined
+    ? [change.path]
+    : [change.path, change.previousPath];
+}
+
+function findUnauthorizedChange(
+  changes: { path: string; previousPath?: string }[],
+  layout: ProcessorOptions["layout"],
+): string | undefined {
+  for (const change of changes) {
+    for (const changedPath of changedPathNames(change)) {
+      if (!isWhitelistedPath(changedPath, layout)) {
+        return `提交前发现白名单外路径: ${changedPath}`;
+      }
+    }
+  }
+  return undefined;
+}
+
+async function restoreUnauthorizedChanges(
+  workspace: VaultWorkspace,
+  changes: { path: string; previousPath?: string }[],
+  layout: ProcessorOptions["layout"],
+): Promise<void> {
+  const paths = new Set<string>();
+  for (const change of changes) {
+    const names = changedPathNames(change);
+    if (names.some((changedPath) => !isWhitelistedPath(changedPath, layout))) {
+      for (const name of names) paths.add(name);
+    }
+  }
+  for (const relative of paths) {
+    try {
+      await workspace.restore(relative);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 function createRoundId(clock: Clock): string {
   return `${clock.now().toISOString()}-${randomUUID()}`;
+}
+
+async function publishChanges(
+  publisher: VaultPublisher | undefined,
+  changes: { path: string; previousPath?: string }[],
+  message: string,
+  layout: ProcessorOptions["layout"],
+  clock: Clock,
+): Promise<{ status: "failed" | "conflict"; reason: string } | undefined> {
+  if (!publisher) return undefined;
+  const paths = unique(changes.flatMap(changedPathNames));
+  if (paths.length === 0) return undefined;
+
+  const published = await publisher.publish(paths, message);
+  if (published.ok) return undefined;
+
+  const reason = published.reason ?? "vault 发布失败";
+  const status = published.conflict ? "conflict" : "failed";
+  logError("processor.publish_failed", {
+    reason,
+    conflict: published.conflict ?? false,
+  });
+  await writeStateSafe(
+    layout,
+    stateBody(clock, status, reason, {
+      phase: "publish",
+      lastError: reason,
+    }),
+  );
+  return { status, reason };
+}
+
+type InboxSnapshot = Map<string, Buffer>;
+
+async function snapshotInbox(
+  layout: ProcessorOptions["layout"],
+): Promise<InboxSnapshot> {
+  const snapshot: InboxSnapshot = new Map();
+  await collectInboxFiles(
+    path.join(layout.vaultPath, layout.inboxDir),
+    "",
+    snapshot,
+  );
+  return snapshot;
+}
+
+async function collectInboxFiles(
+  absoluteDir: string,
+  relativeDir: string,
+  snapshot: InboxSnapshot,
+): Promise<void> {
+  const entries = await readdir(absoluteDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const relative = relativeDir
+      ? `${relativeDir}/${entry.name}`
+      : entry.name;
+    const absolute = path.join(absoluteDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`inbox 包含符号链接: ${relative}`);
+    }
+    if (entry.isDirectory()) {
+      await collectInboxFiles(absolute, relative, snapshot);
+      continue;
+    }
+    if (!entry.isFile()) {
+      throw new Error(`inbox 包含非普通文件: ${relative}`);
+    }
+    snapshot.set(relative, await readFile(absolute));
+  }
+}
+
+async function verifyResearchInboxUnchanged(
+  layout: ProcessorOptions["layout"],
+  before: InboxSnapshot,
+): Promise<string | undefined> {
+  let after: InboxSnapshot;
+  try {
+    after = await snapshotInbox(layout);
+  } catch (error) {
+    try {
+      await removeNonRegularInboxEntries(
+        path.join(layout.vaultPath, layout.inboxDir),
+      );
+      await restoreInboxSnapshot(layout, before);
+    } catch (restoreError) {
+      return `研究阶段无法检查 inbox，且恢复失败: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`;
+    }
+    return `研究阶段修改了 inbox 非普通文件，已恢复原始收件项: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  if (sameSnapshot(before, after)) return undefined;
+
+  try {
+    await restoreInboxSnapshot(layout, before);
+  } catch (error) {
+    return `研究阶段修改 inbox，且恢复失败: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return "研究阶段不得修改 inbox，已恢复原始收件项";
+}
+
+function sameSnapshot(a: InboxSnapshot, b: InboxSnapshot): boolean {
+  if (a.size !== b.size) return false;
+  for (const [relative, content] of a) {
+    const current = b.get(relative);
+    if (current === undefined || !content.equals(current)) return false;
+  }
+  return true;
+}
+
+async function restoreInboxSnapshot(
+  layout: ProcessorOptions["layout"],
+  expected: InboxSnapshot,
+): Promise<void> {
+  const root = path.join(layout.vaultPath, layout.inboxDir);
+  await removeNonRegularInboxEntries(root);
+  const current = await snapshotInbox(layout);
+  for (const relative of current.keys()) {
+    if (!expected.has(relative)) {
+      await rm(path.join(root, relative), { force: true });
+    }
+  }
+  for (const [relative, content] of expected) {
+    const absolute = path.join(root, relative);
+    await mkdir(path.dirname(absolute), { recursive: true });
+    await writeFile(absolute, content);
+  }
+}
+
+async function removeNonRegularInboxEntries(absoluteDir: string): Promise<void> {
+  await mkdir(absoluteDir, { recursive: true });
+  const entries = await readdir(absoluteDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const absolute = path.join(absoluteDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      await rm(absolute, { force: true, recursive: true });
+      continue;
+    }
+    if (entry.isDirectory()) {
+      await removeNonRegularInboxEntries(absolute);
+      continue;
+    }
+    if (!entry.isFile()) {
+      await rm(absolute, { force: true, recursive: true });
+    }
+  }
 }
 
 async function commitWorkingTreeBestEffort(
@@ -322,9 +764,14 @@ async function commitWorkingTreeBestEffort(
   if (!publisher) return;
   try {
     const changes = await workspace.listChanges();
-    const safe = changes.filter((c) => isWhitelistedPath(c.path, layout));
-    if (safe.length === 0) return;
-    await publisher.publish(safe.map((c) => c.path), message);
+    const safe = changes.filter((change) =>
+      changedPathNames(change).every((changedPath) =>
+        isWhitelistedPath(changedPath, layout),
+      ),
+    );
+    const paths = unique(safe.flatMap(changedPathNames));
+    if (paths.length === 0) return;
+    await publisher.publish(paths, message);
   } catch {
     /* 失败路径的提交是尽力而为 */
   }

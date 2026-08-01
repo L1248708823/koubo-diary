@@ -10,11 +10,17 @@ import {
   fixedClock,
   seedInbox,
   writeDiary,
+  writeIdea,
   type TempVault,
 } from "../testkit/temp-vault.js";
 import { runProcessorRound } from "../processor/orchestrator.js";
 import { writeReceipt } from "../vault/fs.js";
-import type { AgentContext, AgentRunner } from "../types.js";
+import {
+  createResearchTask,
+  readResearchTasks,
+  writeResearchTasks,
+} from "../research/tasks.js";
+import type { AgentContext, AgentRunner, ResearchRunner } from "../types.js";
 
 describe("processor orchestrator (seam 1)", () => {
   const vaults: TempVault[] = [];
@@ -55,6 +61,246 @@ describe("processor orchestrator (seam 1)", () => {
     expect(result.status).toBe("empty");
     expect(result.agentInvoked).toBe(false);
     expect(agentCalls).toBe(0);
+  });
+
+  it("内容整理验收后同轮运行 pending research，研究失败不回滚内容", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "需要核实的产品想法");
+    await captureHead();
+    const diaryRel = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+    let researchCalls = 0;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "产品想法\n");
+      await writeResearchTasks(layout, [
+        createResearchTask({
+          taskId: "research-product-1",
+          sourceDiary: diaryRel,
+          question: "这个产品想法的可行性是什么？",
+          now: clock.now().toISOString(),
+        }),
+      ]);
+      return {
+        ok: true,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [
+          { inbox: pendingInbox[0]!, status: "done", diary: diaryRel },
+        ],
+        failed: [],
+        quarantine: [],
+      };
+    });
+    const researchRunner: ResearchRunner = {
+      async run({ task }) {
+        researchCalls += 1;
+        expect(task.status).toBe("running");
+        return { status: "partial", lastError: "证据仍然不足" };
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner,
+      clock,
+    });
+
+    const tasks = await readResearchTasks(vault.layout);
+    expect(result.status).toBe("success");
+    expect(result.researchProcessed).toBe(1);
+    expect(researchCalls).toBe(1);
+    expect(tasks[0]?.status).toBe("partial");
+    expect(await pathExists(path.join(vault.root, diaryRel))).toBe(true);
+    expect(await pathExists(path.join(vault.root, inboxRel))).toBe(false);
+  });
+
+  it("只有研究任务的轮次也会完成白名单检查并发布写回", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const lock = createMemoryLock();
+    const { workspace, publisher, controls, captureHead } =
+      await createFakeVaultAccess(vault.layout);
+    const clock = fixedClock();
+    const diaryRel = await writeDiary(
+      vault.layout,
+      "2026/2026-07/2026-07-29.md",
+      "来源日记\n",
+    );
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "research-only",
+        sourceDiary: diaryRel,
+        question: "需要核实的研究问题？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+    await captureHead();
+
+    const brief = `${vault.layout.researchDir}/研究问题.md`;
+    const researchRunner: ResearchRunner = {
+      async run({ layout }) {
+        await mkdir(path.join(layout.vaultPath, layout.researchDir), {
+          recursive: true,
+        });
+        await writeFile(path.join(layout.vaultPath, brief), "# 研究简报\n");
+        return { status: "complete", brief };
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      publisher,
+      lock,
+      agent: createFakeAgent(async () => ({
+        ok: true,
+        round_ended_at: clock.now().toISOString(),
+        processed: [],
+        failed: [],
+        quarantine: [],
+      })),
+      researchRunner,
+      clock,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.agentInvoked).toBe(false);
+    expect(await pathExists(path.join(vault.root, brief))).toBe(true);
+    expect(controls.head).toBe("HEAD-TEST-c");
+  });
+
+  it("研究 runner 修改 inbox 时失败并恢复脚本已保留的收件项", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const doneInbox = await seedInbox(vault.layout, "完成项", {
+      id: "20260729-120000-done01",
+    });
+    const failedInbox = await seedInbox(vault.layout, "失败项", {
+      id: "20260729-120000-fail01",
+    });
+    await captureHead();
+    const diaryRel = await writeDiary(
+      vault.layout,
+      "2026/2026-07/2026-07-29.md",
+      "内容整理\n",
+    );
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeResearchTasks(layout, [
+        createResearchTask({
+          taskId: "research-inbox-safety",
+          sourceDiary: diaryRel,
+          question: "研究 runner 是否只读 inbox？",
+          now: clock.now().toISOString(),
+        }),
+      ]);
+      return {
+        ok: true,
+        round_ended_at: clock.now().toISOString(),
+        processed: [
+          { inbox: doneInbox, status: "done", diary: diaryRel },
+        ],
+        failed: [
+          { inbox: failedInbox, status: "failed", error: "稍后重试" },
+        ],
+        quarantine: [],
+      };
+    });
+    const researchRunner: ResearchRunner = {
+      async run({ vaultPath }) {
+        await writeFile(path.join(vaultPath, failedInbox), "研究 runner 越权\n");
+        return { status: "blocked", lastError: "测试越权" };
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner,
+      clock,
+    });
+
+    const restored = await readFile(
+      path.join(vault.root, failedInbox),
+      "utf8",
+    );
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("不得修改 inbox");
+    expect(restored).toContain("失败项");
+    expect(restored).toContain("attempts: 1");
+    expect(await pathExists(path.join(vault.root, doneInbox))).toBe(false);
+  });
+
+  it("研究任务按独立上限分批，收件箱为空时可继续研究阶段", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    vault.options.maxResearchPerRound = 1;
+    const inboxRel = await seedInbox(vault.layout, "两个待查任务");
+    await captureHead();
+    const diaryRel = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+    const ideaRel = await writeIdea(vault.layout, "待查产品.md", "产品想法\n");
+    const calls: string[] = [];
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "两个待查任务\n");
+      await writeResearchTasks(layout, [
+        createResearchTask({
+          taskId: "research-a",
+          sourceDiary: diaryRel,
+          question: "日记来源的问题？",
+          now: clock.now().toISOString(),
+        }),
+        createResearchTask({
+          taskId: "research-b",
+          sourceIdea: ideaRel,
+          question: "想法来源的问题？",
+          now: clock.now().toISOString(),
+        }),
+      ]);
+      return {
+        ok: true,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [
+          { inbox: pendingInbox[0]!, status: "done", diary: diaryRel },
+        ],
+        failed: [],
+        quarantine: [],
+      };
+    });
+    const researchRunner: ResearchRunner = {
+      async run({ task }) {
+        calls.push(task.task_id);
+        return { status: "blocked", lastError: "来源暂不可用" };
+      },
+    };
+
+    const first = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner,
+      clock,
+    });
+    await captureHead();
+    const second = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner,
+      clock,
+    });
+
+    expect(first.status).toBe("success");
+    expect(first.researchProcessed).toBe(1);
+    expect(first.researchPending).toBe(1);
+    expect(second.status).toBe("success");
+    expect(second.agentInvoked).toBe(false);
+    expect(second.researchProcessed).toBe(1);
+    expect(second.researchPending).toBe(0);
+    expect(calls).toEqual(["research-a", "research-b"]);
   });
 
   it("假 agent 对一条 inbox 声明 done 且日记存在：验收后删除 inbox，写回仍在", async () => {
