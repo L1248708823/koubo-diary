@@ -26,6 +26,7 @@ capture/public/local-config.js
 /run/
 *.lock
 .temp-vaults/
+/temp/runtime-logs/
 
 # Capture PWA may keep local settings; secrets stay in localStorage only on device
 capture/local-config.js

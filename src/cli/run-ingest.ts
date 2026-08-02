@@ -12,10 +12,13 @@ import {
   loadIngestConfigFromEnv,
   loadLayoutFromEnv,
   loadProcessorOptionsFromEnv,
+  loadResearchConfigFromEnv,
+  loadRuntimeLogConfigFromEnv,
 } from "../env.js";
 import { resolveVaultAccess } from "../git/real-git.js";
 import { createClaudeAgentRunner } from "../agent/claude-runner.js";
 import { createCodexAgentRunner } from "../agent/codex-runner.js";
+import { createCodexResearchRunner } from "../research/codex-runner.js";
 import { runProcessorRound } from "../processor/orchestrator.js";
 import { createMergedProcessorQueue } from "../processor/queue.js";
 import { createFileLock, touchWakeFlag } from "../runtime/lock.js";
@@ -31,10 +34,12 @@ import {
 } from "../research/tasks.js";
 import { ensureVaultDirs, listPendingInbox } from "../vault/fs.js";
 import { logError, logInfo } from "../runtime/log.js";
+import { cleanupRuntimeLogsAfterSuccess } from "../runtime/log-cleanup.js";
 
 async function main(): Promise<void> {
   const layout = loadLayoutFromEnv();
   const cfg = loadIngestConfigFromEnv();
+  const runtimeLogConfig = loadRuntimeLogConfigFromEnv();
   await ensureVaultDirs(layout);
   const clock = { now: () => new Date() };
   const access = resolveVaultAccess(layout.vaultPath, cfg.gitRemote, cfg.gitMode);
@@ -57,6 +62,10 @@ async function main(): Promise<void> {
       agentConfig.provider === "codex"
         ? createCodexAgentRunner(agentConfig)
         : createClaudeAgentRunner(agentConfig);
+    const researchRunner =
+      process.env.ALLOW_NO_AGENT === "1"
+        ? undefined
+        : createCodexResearchRunner(loadResearchConfigFromEnv());
     const lock = createFileLock(cfg.lockPath);
 
     const runLocalProcessor = async (retryResearch = false) => {
@@ -66,10 +75,31 @@ async function main(): Promise<void> {
         ...(access.publisher ? { publisher: access.publisher } : {}),
         lock,
         agent,
+        ...(researchRunner ? { researchRunner } : {}),
         retryFailedResearch: retryResearch,
         clock,
       });
       console.log(JSON.stringify({ localProcessor: result }, null, 2));
+      if (result.status === "success" || result.status === "empty") {
+        try {
+          const cleaned = await cleanupRuntimeLogsAfterSuccess({
+            ...runtimeLogConfig,
+            enabled: runtimeLogConfig.cleanupOnSuccess,
+          });
+          if (cleaned) {
+            logInfo("runtime.logs_cleaned", {
+              directory: runtimeLogConfig.directory,
+              scanned: cleaned.scanned,
+              removed: cleaned.removed.length,
+            });
+          }
+        } catch (error) {
+          logError("runtime.logs_cleanup_failed", {
+            directory: runtimeLogConfig.directory,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       return {
         status: result.status,
         progressed: result.progressed,

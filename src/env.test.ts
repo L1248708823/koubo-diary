@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import {
   loadAgentConfigFromEnv,
   loadIngestConfigFromEnv,
   loadLayoutFromEnv,
   loadProcessorOptionsFromEnv,
+  loadResearchConfigFromEnv,
+  loadRuntimeLogConfigFromEnv,
 } from "./env.js";
 
 describe("agent provider config", () => {
@@ -72,5 +75,34 @@ describe("agent provider config", () => {
     vi.stubEnv("MAX_RESEARCH_PER_ROUND", "2");
 
     expect(loadProcessorOptionsFromEnv().maxResearchPerRound).toBe(2);
+  });
+
+  it("读取研究 runner 的 CLI、模型、思考能力和超时配置", () => {
+    vi.stubEnv("CODEX_BIN", "codex-from-agent");
+    vi.stubEnv("RESEARCH_BIN", "codex-research");
+    vi.stubEnv("RESEARCH_SKILL", "research-brief");
+    vi.stubEnv("RESEARCH_MODEL", "gpt-5.6-luna");
+    vi.stubEnv("RESEARCH_REASONING_EFFORT", "max");
+    vi.stubEnv("RESEARCH_TIMEOUT_MS", "123456");
+
+    expect(loadResearchConfigFromEnv()).toEqual({
+      bin: "codex-research",
+      skill: "research-brief",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "max",
+      timeoutMs: 123456,
+    });
+  });
+
+  it("读取本地日志清理目录、开关和保留期限", () => {
+    vi.stubEnv("RUNTIME_LOG_DIR", "temp/runtime-logs");
+    vi.stubEnv("LOG_CLEANUP_ON_SUCCESS", "1");
+    vi.stubEnv("LOG_RETENTION_MS", "900000");
+
+    expect(loadRuntimeLogConfigFromEnv()).toEqual({
+      directory: path.resolve("temp/runtime-logs"),
+      cleanupOnSuccess: true,
+      retentionMs: 900000,
+    });
   });
 });

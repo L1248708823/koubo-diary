@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
@@ -23,5 +24,11 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: "../dist/capture",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        capture: path.resolve(process.cwd(), "capture/index.html"),
+        flow: path.resolve(process.cwd(), "capture/flow.html"),
+      },
+    },
   },
 }));

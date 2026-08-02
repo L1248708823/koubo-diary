@@ -14,14 +14,35 @@ export type CliAgentSpec = {
   buildArgs(prompt: string, extraArgs: string[]): string[];
 };
 
+export type CliProcessOptions = {
+  provider: string;
+  bin: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv | undefined;
+  timeoutMs: number;
+  capacityRetries?: number;
+  capacityRetryDelayMs?: number;
+};
+
+const DEFAULT_CAPACITY_RETRIES = 2;
+const DEFAULT_CAPACITY_RETRY_DELAY_MS = 3_000;
+export const PROCESSOR_PROMPT_VERSION = "scope-v2-single-line";
+
 /**
  * 在本处理环可见的契约上，两个 CLI 都是“改工作树并写回执”；provider 差异由各自 adapter 封装。
  */
 export function createCliAgentRunner(spec: CliAgentSpec): AgentRunner {
   return {
     async run(ctx: AgentContext): Promise<void> {
-      const prompt = buildProcessorPrompt(ctx, spec.skill);
+      const prompt = buildProcessorPrompt(ctx, spec.skill, spec.provider);
       const args = spec.buildArgs(prompt, spec.extraArgs);
+      logInfo("agent.prompt_built", {
+        provider: spec.provider,
+        promptVersion: PROCESSOR_PROMPT_VERSION,
+        promptLength: prompt.length,
+        pendingCount: ctx.pendingInbox.length,
+      });
 
       await runCliProcess({
         provider: spec.provider,
@@ -46,7 +67,11 @@ export function createCliAgentRunner(spec: CliAgentSpec): AgentRunner {
   };
 }
 
-export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
+export function buildProcessorPrompt(
+  ctx: AgentContext,
+  skill: string,
+  provider = "当前 CLI",
+): string {
   const list = ctx.pendingInbox.map((p) => `- ${p}`).join("\n");
   const inbox = ctx.layout.inboxDir;
   const diary = ctx.layout.diaryDir;
@@ -55,11 +80,23 @@ export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
   const processor = ctx.layout.processorDir;
   const staging = ctx.layout.stagingDir;
   return [
-    `请按 skill「${skill}」处理本轮收件箱（若工作区有 .claude/skills/${skill}/SKILL.md 请严格遵循）。`,
+    `你通过 ${provider} 运行。禁止使用全局 skills 和项目级别 skills，只允许使用我让你使用的 skills 或 MCP。`,
+    `请按本提示中的「${skill}」处理契约处理本轮收件箱；本提示已经包含完整规则。`,
+    "不要读取、搜索或枚举任何 SKILL.md，也不要寻找其它说明文件。",
     "工作目录已是 vault 根目录。",
     `本轮 round_id：${ctx.roundId}`,
     `本轮待处理（最多 ${ctx.maxPerRound} 条，已由编排截取）：`,
     list || "（无）",
+    "",
+    "处理边界（优先级高于工作区内其它说明）：",
+    "- 收件箱输入只能来自本轮快照列出的 pendingInbox 文件；不得读取列表之外的收件箱文件。",
+    `- 除收件箱外，只能用已知完整路径读取对应日期的目标日记、${processor}/research-tasks.json 和 ${processor}/last-run.json；不得借此扫描目录。`,
+    "- 研究任务记录必须包含 task_id、source_diary 或 source_idea、question、status、created_at、updated_at；时间使用 round_id 中的时间。",
+    "- 禁止扫描、列出或搜索整个 vault；不得使用 rg --files、rg ... .、Get-ChildItem、dir、tree 或递归遍历来寻找文件。",
+    "- 禁止枚举环境变量；不得使用 Get-ChildItem Env:，不得读取父目录、工具仓、.git、.env、密钥或临时目录。",
+    "- 需要判断文件是否存在时，只对已知完整路径使用 Test-Path -LiteralPath；不要通过目录列表寻找路径。",
+    "- Windows PowerShell 5.1 下不要使用 Get-Date -AsUTC 或复杂多行内联脚本；时间只使用 captured_at 和 round_id 中已有的时间。",
+    "- 先逐个读取上方列出的 pendingInbox 文件，再按步骤写回；不要先做任何全库、环境或版本控制检查。",
     "",
     "路径约定：",
     `- 日记前缀：${diary}/  → 文件 ${diary}/YYYY/YYYY-MM/YYYY-MM-DD.md`,
@@ -70,7 +107,7 @@ export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
     "",
     "硬性约束：",
     `1. 只改白名单路径：${inbox}（勿删文件）、${staging}、${processor}、${diary}、${ideas}、${research}。`,
-    "2. 不要执行 git commit / push / config。",
+    "2. 不得执行任何 git 命令，包括 status、ls-files、commit、push、pull 和 config。",
     `3. 不要删除 ${inbox} 下的文件；只在回执里声明 done/failed/quarantine。`,
     "4. 写回以日记为轴；可选想法并互链（日记=钩子+链接，想法=全文）；待查登记研究任务，不在本阶段联网。",
     "5. 轻整理：去赘词/重复、保语气；禁止升格代写、扩写未说内容、伪调研结论。",
@@ -79,23 +116,56 @@ export function buildProcessorPrompt(ctx: AgentContext, skill: string): string {
   ].join("\n");
 }
 
-async function runCliProcess(opts: {
-  provider: string;
-  bin: string;
-  args: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv | undefined;
-  timeoutMs: number;
-}): Promise<void> {
+export async function runCliProcess(opts: CliProcessOptions): Promise<void> {
+  const capacityRetries =
+    nonNegativeInt(opts.capacityRetries) ??
+    nonNegativeInt(opts.env?.MODEL_CAPACITY_RETRIES) ??
+    nonNegativeInt(process.env.MODEL_CAPACITY_RETRIES) ??
+    DEFAULT_CAPACITY_RETRIES;
+  const capacityRetryDelayMs =
+    nonNegativeInt(opts.capacityRetryDelayMs) ??
+    nonNegativeInt(opts.env?.MODEL_CAPACITY_RETRY_DELAY_MS) ??
+    nonNegativeInt(process.env.MODEL_CAPACITY_RETRY_DELAY_MS) ??
+    DEFAULT_CAPACITY_RETRY_DELAY_MS;
+
+  for (let retry = 0; ; retry += 1) {
+    try {
+      await runCliProcessOnce(opts);
+      return;
+    } catch (error) {
+      if (!isModelCapacityError(error) || retry >= capacityRetries) {
+        throw error;
+      }
+      const attempt = retry + 1;
+      const delayMs = Math.min(
+        capacityRetryDelayMs * 2 ** retry,
+        60_000,
+      );
+      logInfo("agent.capacity_retry", {
+        provider: opts.provider,
+        attempt,
+        maxRetries: capacityRetries,
+        delayMs,
+      });
+      await wait(delayMs);
+    }
+  }
+}
+
+async function runCliProcessOnce(opts: CliProcessOptions): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const startedAt = Date.now();
     const useWindowsShell = shouldUseWindowsShell(opts.bin);
     const spawnArgs = useWindowsShell
       ? opts.args.map(quoteWindowsShellArg)
       : opts.args;
+    const childEnv = { ...process.env, ...(opts.env ?? {}) };
+    if (!childEnv.GIT_CEILING_DIRECTORIES) {
+      childEnv.GIT_CEILING_DIRECTORIES = path.dirname(opts.cwd);
+    }
     const child = spawn(opts.bin, spawnArgs, {
       cwd: opts.cwd,
-      env: { ...process.env, ...(opts.env ?? {}) },
+      env: childEnv,
       windowsHide: true,
       shell: useWindowsShell,
       stdio: ["ignore", "pipe", "pipe"],
@@ -106,6 +176,7 @@ async function runCliProcess(opts: {
       cwd: opts.cwd,
       argCount: opts.args.length,
       shell: useWindowsShell,
+      argTransport: useWindowsShell ? "cmd-single-line" : "native",
     });
     const outputChunks: Buffer[] = [];
     const errorChunks: Buffer[] = [];
@@ -156,21 +227,49 @@ async function runCliProcess(opts: {
       }
       const output = Buffer.concat(outputChunks).toString("utf8");
       const error = Buffer.concat(errorChunks).toString("utf8");
-      const detail = `${error}\n${output}`.trim().slice(0, 1200);
+      const detail = summarizeCliOutput(error, output);
       reject(new Error(`${opts.provider} agent 退出码 ${code}: ${detail}`));
     });
   });
 }
 
+function summarizeCliOutput(error: string, output: string): string {
+  const text = `${error}\n${output}`.trim();
+  const maxLength = 1_600;
+  if (text.length <= maxLength) return text;
+
+  const marker = "\n...[CLI 输出已截断]...\n";
+  const headLength = 700;
+  const tailLength = maxLength - headLength - marker.length;
+  return `${text.slice(0, headLength)}${marker}${text.slice(-tailLength)}`;
+}
+
+function isModelCapacityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /selected model is at capacity|model[^\r\n]*at capacity/i.test(message);
+}
+
+function nonNegativeInt(value: number | string | undefined): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+async function wait(delayMs: number): Promise<void> {
+  if (delayMs <= 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+}
+
 /**
  * Node 在 Windows 以 shell 启动 .cmd 时不会替调用方保护带空格的参数。
- * prompt 是一个完整的多行参数，必须在交给 cmd.exe 前保留为单个参数。
+ * cmd.exe 还会把参数中的换行解释为命令分隔符，因此先把多行 prompt 压成单行。
  */
 export function quoteWindowsShellArg(value: string): string {
-  if (value.length === 0) return '""';
-  if (!/[\s"&|<>^]/.test(value)) return value;
+  const normalized = value.replace(/\r\n?|\n/g, " ");
+  if (normalized.length === 0) return '""';
+  if (!/[\s"&|<>^]/.test(normalized)) return normalized;
 
-  const escaped = value
+  const escaped = normalized
     .replace(/(\\*)"/g, "$1$1\\\"")
     .replace(/(\\+)$/g, "$1$1");
   return `"${escaped}"`;

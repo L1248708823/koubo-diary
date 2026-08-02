@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ResearchTask, VaultLayout } from "../types.js";
 
@@ -48,7 +48,10 @@ export async function readResearchTasks(
   if (!Array.isArray(entries)) {
     throw new Error("研究任务状态格式不合法");
   }
-  return dedupeResearchTasks(entries.map(parseResearchTask));
+  const fallbackTimestamp = await taskFileTimestamp(file);
+  return dedupeResearchTasks(
+    entries.map((entry) => parseResearchTask(entry, fallbackTimestamp)),
+  );
 }
 
 export async function writeResearchTasks(
@@ -135,7 +138,7 @@ function researchTaskIdentity(task: ResearchTask): string {
   return `${source}|${task.question.trim()}`;
 }
 
-function parseResearchTask(raw: unknown): ResearchTask {
+function parseResearchTask(raw: unknown, fallbackTimestamp: string): ResearchTask {
   if (!raw || typeof raw !== "object") {
     throw new Error("研究任务条目格式不合法");
   }
@@ -143,8 +146,6 @@ function parseResearchTask(raw: unknown): ResearchTask {
   if (
     typeof item.task_id !== "string" ||
     typeof item.question !== "string" ||
-    typeof item.created_at !== "string" ||
-    typeof item.updated_at !== "string" ||
     !isResearchTaskStatus(item.status)
   ) {
     throw new Error("研究任务缺少必要字段");
@@ -153,18 +154,48 @@ function parseResearchTask(raw: unknown): ResearchTask {
   if (question.length === 0) {
     throw new Error("研究任务 question 不能为空");
   }
+  const createdAt = readTimestampField(
+    item.created_at,
+    fallbackTimestamp,
+    "created_at",
+  );
+  const updatedAt = readTimestampField(
+    item.updated_at,
+    createdAt,
+    "updated_at",
+  );
   const task: ResearchTask = {
     task_id: item.task_id,
     question,
     status: item.status,
-    created_at: item.created_at,
-    updated_at: item.updated_at,
+    created_at: createdAt,
+    updated_at: updatedAt,
   };
   if (typeof item.source_diary === "string") task.source_diary = item.source_diary;
   if (typeof item.source_idea === "string") task.source_idea = item.source_idea;
   if (typeof item.brief === "string") task.brief = item.brief;
   if (typeof item.last_error === "string") task.last_error = item.last_error;
   return task;
+}
+
+async function taskFileTimestamp(file: string): Promise<string> {
+  try {
+    return (await stat(file)).mtime.toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
+function readTimestampField(
+  value: unknown,
+  fallback: string,
+  field: string,
+): string {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`研究任务 ${field} 格式不合法`);
+  }
+  return value;
 }
 
 function isResearchTaskStatus(value: unknown): value is ResearchTask["status"] {

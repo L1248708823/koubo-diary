@@ -82,6 +82,16 @@ processor.acceptance      回执验收结果
 processor.round_finished  本轮完成
 ```
 
+本地示例配置将日志重定向目录设为 `temp/runtime-logs/`，该目录不会进入 Git。成功或空处理轮次结束后，程序会清理超过 `LOG_RETENTION_MS` 的 `.log` 文件；失败轮次保留现场，方便排查。默认示例保留 15 分钟，因此当前运行日志不会因刚结束就立即消失。
+
+也可以手动清理：
+
+```powershell
+npm.cmd run logs:clean
+```
+
+手动命令默认只处理 `temp/runtime-logs/` 下超过 15 分钟的 `.log` 文件。通过 `RUNTIME_LOG_DIR` 指定目录，使用 `LOG_RETENTION_MS` 调整保留时间。
+
 如果手动运行 `local:processor` 返回 `status: locked`，先查看 `local:ingest` 窗口里的 `lock.busy` 日志。日志会包含锁文件中的 PID 和创建时间。确认持有锁的处理进程已经退出后，才清理陈旧的 `processor.lock`。
 
 验收重点：
@@ -130,6 +140,18 @@ GIT_REMOTE=origin
 - 唤醒文件、cron、systemd 单实例锁。
 
 本地线无法证明这些生产行为，所以它只负责联调文件写回和真实 CLI runner。生产前的手测顺序见 `docs/ops/field-drill.md` 与 `docs/ops/handoff-ops.md`。
+
+## 线上日志
+
+生产配置保持 `LOG_AGENT_OUTPUT=0`，应用日志写标准输出和标准错误，由 systemd journal 接管。生产环境不要设置 `RUNTIME_LOG_DIR` 或开启 `LOG_CLEANUP_ON_SUCCESS`，避免应用进程清理宿主机日志文件，也避免把线上日志放入工具仓。
+
+建议按宿主机统一策略保留 14 到 30 天，例如使用 journald 的 `SystemMaxUse`、`MaxRetentionSec`，或由运维定期执行：
+
+```bash
+journalctl --vacuum-time=14d
+```
+
+若线上必须写文件，应将目录放在 `/var/log/koubo/` 等工具仓之外的位置，并交给 `logrotate` 按天轮转、压缩和删除。应用内清理只服务本地联调，线上日志保留由宿主机负责。
 
 ## 两个仓库的判定规则
 

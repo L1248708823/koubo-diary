@@ -84,6 +84,20 @@ export type AgentConfig = {
   skill: string;
 };
 
+export type ResearchAgentConfig = {
+  bin: string;
+  skill: string;
+  model: string;
+  reasoningEffort: string;
+  timeoutMs: number;
+};
+
+export type RuntimeLogConfig = {
+  directory?: string;
+  cleanupOnSuccess: boolean;
+  retentionMs: number;
+};
+
 export function loadAgentConfigFromEnv(): AgentConfig {
   const provider = env("AGENT_PROVIDER");
   if (provider !== "codex" && provider !== "claude") {
@@ -104,5 +118,30 @@ export function loadAgentConfigFromEnv(): AgentConfig {
     provider,
     bin: configuredBin ?? defaultBin,
     skill: env("PROCESSOR_SKILL", "处理收件箱")!,
+  };
+}
+
+export function loadResearchConfigFromEnv(): ResearchAgentConfig {
+  const defaultBin = process.platform === "win32" ? "codex.cmd" : "codex";
+  return {
+    bin: env("RESEARCH_BIN", env("CODEX_BIN", defaultBin))!,
+    skill: env("RESEARCH_SKILL", "research-brief")!,
+    model: env("RESEARCH_MODEL", "gpt-5.6-luna")!,
+    reasoningEffort: env("RESEARCH_REASONING_EFFORT", "max")!,
+    timeoutMs: Math.max(1, envInt("RESEARCH_TIMEOUT_MS", 15 * 60_000)),
+  };
+}
+
+export function loadRuntimeLogConfigFromEnv(): RuntimeLogConfig {
+  const configuredDirectory = env("RUNTIME_LOG_DIR");
+  return {
+    ...(configuredDirectory
+      ? { directory: path.resolve(configuredDirectory) }
+      : {}),
+    cleanupOnSuccess: env("LOG_CLEANUP_ON_SUCCESS", "0") === "1",
+    retentionMs: Math.max(
+      0,
+      envInt("LOG_RETENTION_MS", 7 * 24 * 60 * 60_000),
+    ),
   };
 }

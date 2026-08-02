@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { pathExists } from "../vault/fs.js";
 import path from "node:path";
 import {
@@ -20,6 +20,10 @@ import {
   readResearchTasks,
   writeResearchTasks,
 } from "../research/tasks.js";
+import {
+  createResearchBriefRunner,
+  type ResearchEvidenceBundle,
+} from "../research/brief.js";
 import type { AgentContext, AgentRunner, ResearchRunner } from "../types.js";
 
 describe("processor orchestrator (seam 1)", () => {
@@ -61,6 +65,198 @@ describe("processor orchestrator (seam 1)", () => {
     expect(result.status).toBe("empty");
     expect(result.agentInvoked).toBe(false);
     expect(agentCalls).toBe(0);
+  });
+
+  it("旧版研究任务缺少时间字段时，处理轮仍能进入研究阶段", async () => {
+    const { vault, lock, workspace, clock } = await setup();
+    const diary = await writeDiary(
+      vault.layout,
+      "2026/2026-07/2026-07-31.md",
+      "需要继续验证的研究来源。\n",
+    );
+    await writeFile(
+      path.join(vault.root, vault.layout.processorDir, "research-tasks.json"),
+      JSON.stringify([
+        {
+          task_id: "legacy-orchestrator-task",
+          source_diary: diary,
+          question: "旧版任务能否继续进入研究阶段？",
+          status: "pending",
+        },
+      ]),
+      "utf8",
+    );
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent: { async run() {} },
+      researchRunner: createResearchBriefRunner({
+        async collect({ task }) {
+          return integrationEvidence(task.question);
+        },
+      }),
+      clock,
+    });
+
+    const tasks = await readResearchTasks(vault.layout);
+    expect(result.status).toBe("success");
+    expect(result.researchProcessed).toBe(1);
+    expect(tasks[0]?.status).toBe("complete");
+    expect(await pathExists(path.join(vault.root, tasks[0]?.brief ?? ""))).toBe(
+      true,
+    );
+  });
+
+  it("五条连续投递在一个处理环中唯一交代并进入研究阶段", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    vault.options.maxPerRound = 5;
+    const inboxes: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      inboxes.push(
+        await seedInbox(vault.layout, `连续口播 ${index + 1}`, {
+          id: `20260729-12000${index}-bulk0${index}`,
+        }),
+      );
+    }
+    await captureHead();
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+    const question = "五条连续口播对应的研究问题是什么？";
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeDiary(
+        layout,
+        "2026/2026-07/2026-07-29.md",
+        pendingInbox.map((inbox) => `- 口播条目：${inbox}`).join("\n") + "\n",
+      );
+      await writeResearchTasks(layout, [
+        createResearchTask({
+          taskId: "research-bulk-round",
+          sourceDiary: diary,
+          question,
+          now: clock.now().toISOString(),
+        }),
+      ]);
+      return {
+        ok: true,
+        round_ended_at: clock.now().toISOString(),
+        processed: pendingInbox.map((inbox) => ({
+          inbox,
+          status: "done" as const,
+          diary,
+        })),
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner: createResearchBriefRunner({
+        async collect({ task }) {
+          return integrationEvidence(task.question);
+        },
+      }),
+      clock,
+    });
+
+    const receipt = JSON.parse(
+      await readFile(path.join(vault.root, vault.layout.processorDir, "last-run.json"), "utf8"),
+    ) as { processed: { inbox: string }[] };
+    const tasks = await readResearchTasks(vault.layout);
+    expect(result.status).toBe("success");
+    expect(result.deletedInbox).toHaveLength(5);
+    expect(new Set(receipt.processed.map((item) => item.inbox))).toEqual(
+      new Set(inboxes),
+    );
+    expect(receipt.processed).toHaveLength(5);
+    expect(result.researchProcessed).toBe(1);
+    expect(tasks[0]?.status).toBe("complete");
+    expect(
+      await pathExists(path.join(vault.root, tasks[0]?.brief ?? "")),
+    ).toBe(true);
+    expect(
+      await readFile(path.join(vault.root, diary), "utf8"),
+    ).toContain("口播条目：_inbox/");
+  });
+
+  it("独立想法与待查轴同时成立，并从想法进入研究简报", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inbox = await seedInbox(vault.layout, "一个同时需要长期回看和核实的产品想法");
+    await captureHead();
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+    const idea = `${vault.layout.ideasDir}/个人工具验证.md`;
+    const question = "这个个人工具想法的最小验证路径是什么？";
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeDiary(
+        layout,
+        "2026/2026-07/2026-07-29.md",
+        `## 12:00\n\n[[${idea.replace(/\.md$/, "")}]]\n${pendingInbox[0]}\n`,
+      );
+      await writeIdea(
+        layout,
+        "个人工具验证.md",
+        [
+          "---",
+          "needs_research: true",
+          "research_status: pending",
+          "---",
+          "",
+          `一个需要核实的产品想法。来源：[[${diary.replace(/\.md$/, "")}]]`,
+          "",
+        ].join("\n"),
+      );
+      await writeResearchTasks(layout, [
+        createResearchTask({
+          taskId: "research-idea-round",
+          sourceDiary: diary,
+          sourceIdea: idea,
+          question,
+          now: clock.now().toISOString(),
+        }),
+      ]);
+      return {
+        ok: true,
+        round_ended_at: clock.now().toISOString(),
+        processed: [{ inbox: pendingInbox[0]!, status: "done" as const, diary, idea }],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner: createResearchBriefRunner({
+        async collect({ task }) {
+          return integrationEvidence(task.question);
+        },
+      }),
+      clock,
+    });
+
+    const tasks = await readResearchTasks(vault.layout);
+    const savedIdea = await readFile(path.join(vault.root, idea), "utf8");
+    expect(result.status).toBe("success");
+    expect(result.deletedInbox).toEqual([inbox]);
+    expect(result.researchProcessed).toBe(1);
+    expect(tasks[0]?.source_idea).toBe(idea);
+    expect(tasks[0]?.status).toBe("complete");
+    expect(savedIdea).toContain("needs_research: false");
+    expect(savedIdea).toContain("research_status: complete");
+    expect(savedIdea).toContain("[[Yan帳/研究/");
+    expect(
+      (await readdir(path.join(vault.root, vault.layout.researchDir))).filter(
+        (entry) => entry.endsWith(".md"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("内容整理验收后同轮运行 pending research，研究失败不回滚内容", async () => {
@@ -138,16 +334,11 @@ describe("processor orchestrator (seam 1)", () => {
     ]);
     await captureHead();
 
-    const brief = `${vault.layout.researchDir}/研究问题.md`;
-    const researchRunner: ResearchRunner = {
-      async run({ layout }) {
-        await mkdir(path.join(layout.vaultPath, layout.researchDir), {
-          recursive: true,
-        });
-        await writeFile(path.join(layout.vaultPath, brief), "# 研究简报\n");
-        return { status: "complete", brief };
+    const researchRunner = createResearchBriefRunner({
+      async collect({ task }) {
+        return integrationEvidence(task.question);
       },
-    };
+    });
 
     const result = await runProcessorRound({
       options: vault.options,
@@ -167,8 +358,65 @@ describe("processor orchestrator (seam 1)", () => {
 
     expect(result.status).toBe("success");
     expect(result.agentInvoked).toBe(false);
-    expect(await pathExists(path.join(vault.root, brief))).toBe(true);
+    const tasks = await readResearchTasks(vault.layout);
+    expect(tasks[0]?.status).toBe("complete");
+    expect(
+      await pathExists(path.join(vault.root, tasks[0]?.brief ?? "")),
+    ).toBe(true);
     expect(controls.head).toBe("HEAD-TEST-c");
+  });
+
+  it("处理环会在内容验收后完成假来源研究简报写回", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "需要研究的产品想法");
+    await captureHead();
+    const diaryRel = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "产品想法\n");
+      await writeResearchTasks(layout, [
+        createResearchTask({
+          taskId: "research-brief-round",
+          sourceDiary: diaryRel,
+          question: "这个产品想法的可行性是什么？",
+          now: clock.now().toISOString(),
+        }),
+      ]);
+      return {
+        ok: true,
+        round_ended_at: clock.now().toISOString(),
+        processed: [
+          { inbox: pendingInbox[0]!, status: "done", diary: diaryRel },
+        ],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner: createResearchBriefRunner({
+        async collect({ task }) {
+          return integrationEvidence(task.question);
+        },
+      }),
+      clock,
+    });
+
+    const tasks = await readResearchTasks(vault.layout);
+    expect(result.status).toBe("success");
+    expect(result.deletedInbox).toEqual([inboxRel]);
+    expect(tasks[0]?.status).toBe("complete");
+    expect(tasks[0]?.brief).toMatch(/^Yan帳\/研究\/[^/]+\.md$/);
+    expect(
+      await pathExists(path.join(vault.root, tasks[0]?.brief ?? "")),
+    ).toBe(true);
+    expect(await readFile(path.join(vault.root, diaryRel), "utf8")).toContain(
+      "needs_research: false",
+    );
   });
 
   it("研究 runner 修改 inbox 时失败并恢复脚本已保留的收件项", async () => {
@@ -872,3 +1120,79 @@ describe("processor orchestrator (seam 1)", () => {
     expect(agentCalls).toBe(0);
   });
 });
+
+function integrationEvidence(question: string): ResearchEvidenceBundle {
+  return {
+    title: "产品想法可行性研究",
+    question,
+    executiveSummary: "原型阶段可以验证核心流程，但仍需用真实样本确认边界。",
+    facts: [
+      {
+        claim: "原型可以先验证可观察的技术指标。",
+        evidence: "原始技术资料描述了可测量的输出。",
+        sourceIds: ["original", "independent"],
+      },
+    ],
+    inferences: ["先做小样本验证可以降低实现风险。"],
+    recommendations: ["记录输入条件、输出指标和人工复核结果。"],
+    perspectives: [
+      {
+        label: "支持观点",
+        viewpoint: "固定条件下的原型验证具备可行性。",
+        sourceIds: ["original"],
+        redTeam: false,
+      },
+      {
+        label: "反方审查",
+        viewpoint: "样本偏差和环境变化可能削弱结论的外部有效性。",
+        sourceIds: ["counter"],
+        redTeam: true,
+      },
+    ],
+    unknowns: ["真实用户样本下的误差范围尚未测量。"],
+    limitations: ["假来源只验证写回契约，不证明真实研究结论。"],
+    method: ["交叉检查原始资料、独立资料和反方条件。"],
+    stopReason: "新增来源不再改变主要结论和未知点。",
+    sources: [
+      {
+        id: "original",
+        kind: "original",
+        title: "Original technical material",
+        authorOrInstitution: "Research Institute",
+        publishedAt: "2024-01-01",
+        accessedAt: "2026-08-01",
+        url: "https://example.com/original",
+        scope: "原型技术指标",
+        limitations: "不覆盖真实用户样本",
+        evidence: "原始资料说明了指标定义。",
+        verified: true,
+      },
+      {
+        id: "independent",
+        kind: "independent",
+        title: "Independent technical review",
+        authorOrInstitution: "Independent Lab",
+        publishedAt: "2024-02-01",
+        accessedAt: "2026-08-01",
+        url: "https://example.com/independent",
+        scope: "独立复核",
+        limitations: "实验条件有限",
+        evidence: "独立资料指出了环境变量。",
+        verified: true,
+      },
+      {
+        id: "counter",
+        kind: "counter",
+        title: "Counter evidence review",
+        authorOrInstitution: "Review Board",
+        publishedAt: "2024-03-01",
+        accessedAt: "2026-08-01",
+        url: "https://example.com/counter",
+        scope: "反方条件",
+        limitations: "不适用于所有场景",
+        evidence: "反方资料指出了外部有效性限制。",
+        verified: true,
+      },
+    ],
+  };
+}

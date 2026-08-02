@@ -1,6 +1,10 @@
 import path from "node:path";
 import { isDiaryPath, isIdeaPath, isResearchPath } from "../config.js";
 import {
+  markResearchPending,
+  validateResearchWriteback,
+} from "./brief.js";
+import {
   countPendingResearchTasks,
   countRunnableResearchTasks,
   dedupeResearchTasks,
@@ -139,6 +143,7 @@ export async function runResearchStage(args: {
             layout,
             task: running,
             now: clock.now(),
+            action: candidate.status === "pending" ? "start" : "refresh",
           });
         } catch (error) {
           outcome = {
@@ -149,16 +154,40 @@ export async function runResearchStage(args: {
       }
     }
 
-    if (
-      outcome.status === "complete" &&
-      (outcome.brief === undefined ||
+    if (outcome.status === "complete") {
+      let writebackError: string | undefined;
+      if (
+        outcome.brief === undefined ||
         !isResearchPath(outcome.brief, layout) ||
-        !(await pathExists(path.join(layout.vaultPath, outcome.brief))))
-    ) {
-      outcome = {
-        status: "partial",
-        lastError: "研究 runner 未提供合法且存在的 brief 路径",
-      };
+        !(await pathExists(path.join(layout.vaultPath, outcome.brief)))
+      ) {
+        writebackError = "研究 runner 未提供合法且存在的 brief 路径";
+      } else {
+        writebackError = await validateResearchWriteback({
+          layout,
+          task: running,
+          briefPath: outcome.brief,
+        });
+      }
+      if (writebackError) {
+        await markResearchPending(
+          {
+            vaultPath: layout.vaultPath,
+            layout,
+            task: running,
+            now: clock.now(),
+          },
+          "partial",
+          outcome.brief && isResearchPath(outcome.brief, layout)
+            ? outcome.brief
+            : undefined,
+        );
+        outcome = {
+          status: "partial",
+          ...(outcome.brief ? { brief: outcome.brief } : {}),
+          lastError: writebackError,
+        };
+      }
     }
     const completed = applyResearchOutcome(running, outcome, clock.now());
     tasks = replaceResearchTask(tasks, completed);

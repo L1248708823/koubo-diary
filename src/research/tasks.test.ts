@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
   createResearchTask,
   readResearchTasks,
@@ -53,5 +55,37 @@ describe("research task state", () => {
     ]);
 
     expect(recovered[0]?.status).toBe("pending");
+  });
+
+  it("兼容旧版缺少时间字段的研究任务，并补齐时间", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const taskFile = path.join(
+      vault.root,
+      vault.layout.processorDir,
+      "research-tasks.json",
+    );
+    await writeFile(
+      taskFile,
+      JSON.stringify([
+        {
+          task_id: "legacy-task",
+          source_diary: "生活/日子一天天过去/2026/2026-08/2026-08-01.md",
+          question: "旧任务还能继续研究吗？",
+          status: "pending",
+        },
+      ]),
+      "utf8",
+    );
+
+    const tasks = await readResearchTasks(vault.layout);
+
+    expect(tasks[0]).toMatchObject({
+      task_id: "legacy-task",
+      status: "pending",
+      created_at: expect.any(String),
+      updated_at: expect.any(String),
+    });
+    expect(tasks[0]?.created_at).toBe(tasks[0]?.updated_at);
   });
 });

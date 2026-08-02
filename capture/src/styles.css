@@ -35,6 +35,7 @@ header { display: flex; align-items: center; justify-content: space-between; hei
 .brand { font-size: 16px; font-weight: 800; letter-spacing: -.04em; }
 .header-actions { display: flex; gap: 8px; }
 .icon-btn { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 11px; background: transparent; color: var(--muted); cursor: pointer; }
+.flow-link { display: grid; place-items: center; color: var(--muted); text-decoration: none; }
 .presence { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 48px 0 14px; }
 .presence strong { display: block; margin-top: 2px; font-size: 34px; line-height: 1; letter-spacing: -.08em; }
 .presence span { color: var(--muted); font-size: 12px; }

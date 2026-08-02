@@ -26,6 +26,7 @@ export type ResearchRunnerContext = {
   layout: VaultLayout;
   task: ResearchTask;
   now: Date;
+  action?: "start" | "refresh";
 };
 
 export type ResearchRunnerResult = {

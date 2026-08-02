@@ -287,6 +287,7 @@ onUnmounted(() => {
     <header>
       <div class="brand">口播</div>
       <div class="header-actions">
+        <a class="icon-btn flow-link" href="/flow.html" aria-label="查看处理流程" title="查看处理流程">↗</a>
         <button class="icon-btn" type="button" aria-label="投递设置" @click="openSettings">⚙</button>
         <button class="icon-btn" type="button" aria-label="切换主题" @click="toggleTheme">☼</button>
       </div>
