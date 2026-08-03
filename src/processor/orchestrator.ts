@@ -11,6 +11,7 @@ import type {
   AgentRunner,
   Clock,
   Lock,
+  LockHandle,
   ProcessorOptions,
   ResearchRunner,
   RoundResult,
@@ -32,7 +33,7 @@ import {
   researchDetail,
   runResearchStage,
   safeRunnableResearchCount,
-  safePendingResearchCount,
+  safeUnfinishedResearchCount,
 } from "../research/stage.js";
 
 export type ProcessorDeps = {
@@ -57,7 +58,24 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     maxPerRound: options.maxPerRound,
   });
 
-  const handle = await lock.tryAcquire();
+  let handle: LockHandle | null;
+  try {
+    handle = await lock.tryAcquire();
+  } catch (error) {
+    const reason = errorMessage(error);
+    logError("processor.lock_failed", { reason });
+    const stateFailure = await writeFailureState(layout, clock, reason);
+    return {
+      status: "failed",
+      reason: stateFailure ? `${reason}; ${stateFailure}` : reason,
+      deletedInbox: [],
+      quarantined: [],
+      agentInvoked: false,
+      progressed: false,
+      researchProcessed: 0,
+      researchPending: 0,
+    };
+  }
   if (!handle) {
     logInfo("processor.round_locked", { vaultPath: layout.vaultPath });
     return {
@@ -71,6 +89,13 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       researchPending: 0,
     };
   }
+
+  let agentInvoked = false;
+  let deletedInbox: string[] = [];
+  let quarantined: string[] = [];
+  let progressed = false;
+  let researchProcessed = 0;
+  let researchPending = 0;
 
   try {
     const prepared = await workspace.prepare();
@@ -104,38 +129,15 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     }
 
     const allPending = await listPendingInbox(layout);
-    const researchPendingBefore = await safePendingResearchCount(layout);
+    const researchPendingBefore = await safeUnfinishedResearchCount(layout);
     const researchRunnableBefore = await safeRunnableResearchCount(layout);
-    if (
-      researchPendingBefore === undefined ||
-      researchRunnableBefore === undefined
-    ) {
-      const reason = "研究任务状态不可用，已停止本轮";
-      await writeStateSafe(
-        layout,
-        stateBody(clock, "failed", reason, {
-          phase: "research",
-          inboxPending: allPending.length,
-          lastError: reason,
-        }),
-      );
-      return {
-        status: "failed",
-        reason,
-        deletedInbox: [],
-        quarantined: [],
-        agentInvoked: false,
-        progressed: false,
-        researchProcessed: 0,
-        researchPending: 0,
-      };
-    }
+    researchPending = researchPendingBefore;
     logInfo("processor.inbox_scanned", {
       pending: allPending.length,
       selected: Math.min(allPending.length, options.maxPerRound),
     });
     if (allPending.length === 0) {
-      if (deps.researchRunner && researchRunnableBefore > 0) {
+      if (researchRunnableBefore > 0) {
         const researchInboxSnapshot = await snapshotInbox(layout);
         const research = await runResearchStage({
           layout,
@@ -144,6 +146,9 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
           clock,
           retryFailedResearch,
         });
+        researchProcessed = research.processed;
+        researchPending = research.pending;
+        progressed = research.progressed;
         const inboxSafetyError = await verifyResearchInboxUnchanged(
           layout,
           researchInboxSnapshot,
@@ -185,19 +190,24 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
         const finalChanges = await workspace.listChanges();
         const unauthorized = findUnauthorizedChange(finalChanges, layout);
         if (unauthorized) {
-          await restoreUnauthorizedChanges(workspace, finalChanges, layout);
+          const recoveryErrors = await restoreUnauthorizedChanges(
+            workspace,
+            finalChanges,
+            layout,
+          );
+          const reason = appendRecoveryErrors(unauthorized, recoveryErrors);
           await writeStateSafe(
             layout,
-            stateBody(clock, "failed", unauthorized, {
+            stateBody(clock, "failed", reason, {
               phase: "publish",
               inboxPending: 0,
               researchPending: research.pending,
-              lastError: unauthorized,
+              lastError: reason,
             }),
           );
           return {
             status: "failed",
-            reason: unauthorized,
+            reason,
             deletedInbox: [],
             quarantined: [],
             agentInvoked: false,
@@ -275,6 +285,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     const roundId = createRoundId(clock);
 
     const agentStartedAt = Date.now();
+    agentInvoked = true;
     logInfo("processor.agent_started", {
       count: pendingInbox.length,
       roundId,
@@ -319,48 +330,45 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     if (!acceptance.ok) {
       // Restore or remove every path involved in an unsafe agent change.
       const recoveryPaths = unique(acceptance.recoveryPaths);
-      for (const p of recoveryPaths) {
-        try {
-          await workspace.restore(p);
-        } catch {
-          /* best effort */
-        }
-      }
+      const recoveryErrors = await restorePaths(workspace, recoveryPaths);
+      const failureReason = appendRecoveryErrors(
+        acceptance.reason,
+        recoveryErrors,
+      );
       // 验收失败：不删 inbox；对快照内仍在的条目 attempts+1，触顶则隔离
-      const quarantinedOnFail: string[] = [];
       for (const inbox of snapshotInboxPaths) {
         if (!(await pathExists(path.join(layout.vaultPath, inbox)))) continue;
-        try {
-          const attempts = await bumpInboxAttempts(layout, inbox);
-          if (attempts >= options.maxAttempts) {
-            const dest = await moveToQuarantine(layout, inbox);
-            quarantinedOnFail.push(dest);
-          }
-        } catch {
-          /* best effort */
+        const attempts = await bumpInboxAttempts(layout, inbox);
+        if (attempts >= options.maxAttempts) {
+          const dest = await moveToQuarantine(layout, inbox);
+          quarantined.push(dest);
+          progressed = true;
         }
       }
       await writeStateSafe(
         layout,
-        stateBody(clock, "failed", acceptance.reason, {
+        stateBody(clock, "failed", failureReason, {
           phase: "content",
           inboxPending: (await listPendingInbox(layout)).length,
           researchPending: researchPendingBefore,
-          lastError: acceptance.reason,
+          lastError: failureReason,
         }),
       );
       // 失败也尽量把 attempts / 隔离 / STATE 提交进去，避免下轮丢计数
-      await commitWorkingTreeBestEffort(
+      const failurePublishError = await commitWorkingTreeBestEffort(
         workspace,
         publisher,
         layout,
-        `processor: failed ${acceptance.reason}`.slice(0, 200),
+        ("processor: failed " + failureReason).slice(0, 200),
       );
+      const finalFailureReason = failurePublishError
+        ? failureReason + "; " + failurePublishError
+        : failureReason;
       return {
         status: "failed",
-        reason: acceptance.reason,
+        reason: finalFailureReason,
         deletedInbox: [],
-        quarantined: quarantinedOnFail,
+        quarantined,
         agentInvoked: true,
         progressed: false,
         researchProcessed: 0,
@@ -368,14 +376,12 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       };
     }
 
-    const deletedInbox: string[] = [];
-    const quarantined: string[] = [];
-
     // Handle explicit quarantine from receipt
     for (const inbox of acceptance.quarantineInboxes) {
       if (await pathExists(path.join(layout.vaultPath, inbox))) {
         const dest = await moveToQuarantine(layout, inbox);
         quarantined.push(dest);
+        progressed = true;
       }
     }
 
@@ -386,6 +392,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       if (attempts >= options.maxAttempts) {
         const dest = await moveToQuarantine(layout, inbox);
         quarantined.push(dest);
+        progressed = true;
       }
     }
 
@@ -393,6 +400,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     for (const item of acceptance.done) {
       await deleteInboxFile(layout, item.inbox);
       deletedInbox.push(item.inbox);
+      progressed = true;
     }
 
     const researchInboxSnapshot = await snapshotInbox(layout);
@@ -403,12 +411,15 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       clock,
       retryFailedResearch,
     });
+    researchProcessed = research.processed;
+    researchPending = research.pending;
     const inboxSafetyError = await verifyResearchInboxUnchanged(
       layout,
       researchInboxSnapshot,
     );
     const contentProgressed = deletedInbox.length > 0 || quarantined.length > 0;
     const roundProgressed = contentProgressed || research.progressed;
+    progressed = roundProgressed;
     const roundStatus = research.error ? "failed" : "success";
     const roundDetail = research.error
       ? research.error
@@ -430,7 +441,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       return {
         status: "failed",
         reason: inboxSafetyError,
-        deletedInbox: [],
+        deletedInbox,
         quarantined,
         agentInvoked: true,
         progressed: roundProgressed,
@@ -442,20 +453,25 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     const finalChanges = await workspace.listChanges();
     const unauthorized = findUnauthorizedChange(finalChanges, layout);
     if (unauthorized) {
-      await restoreUnauthorizedChanges(workspace, finalChanges, layout);
+      const recoveryErrors = await restoreUnauthorizedChanges(
+        workspace,
+        finalChanges,
+        layout,
+      );
+      const reason = appendRecoveryErrors(unauthorized, recoveryErrors);
       await writeStateSafe(
         layout,
-        stateBody(clock, "failed", unauthorized, {
+        stateBody(clock, "failed", reason, {
           phase: "publish",
           inboxPending: (await listPendingInbox(layout)).length,
           researchPending: research.pending,
-          lastError: unauthorized,
+          lastError: reason,
         }),
       );
       return {
         status: "failed",
-        reason: unauthorized,
-        deletedInbox: [],
+        reason,
+        deletedInbox,
         quarantined,
         agentInvoked: true,
         progressed: roundProgressed,
@@ -508,6 +524,20 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
     } as const;
     logInfo("processor.round_finished", result);
     return result;
+  } catch (error) {
+    const reason = errorMessage(error);
+    logError("processor.round_failed", { reason });
+    const stateFailure = await writeFailureState(layout, clock, reason);
+    return {
+      status: "failed",
+      reason: stateFailure ? `${reason}; ${stateFailure}` : reason,
+      deletedInbox,
+      quarantined,
+      agentInvoked,
+      progressed,
+      researchProcessed,
+      researchPending,
+    };
   } finally {
     await handle.release();
   }
@@ -545,8 +575,31 @@ async function writeStateSafe(
 ): Promise<void> {
   try {
     await writeState(layout, body);
-  } catch {
-    /* non-fatal */
+  } catch (error) {
+    const reason = `STATE 写回失败: ${errorMessage(error)}`;
+    logError("processor.state_write_failed", { reason });
+    throw new Error(reason, { cause: error });
+  }
+}
+
+async function writeFailureState(
+  layout: ProcessorOptions["layout"],
+  clock: Clock,
+  reason: string,
+): Promise<string | undefined> {
+  try {
+    await writeState(
+      layout,
+      stateBody(clock, "failed", reason, {
+        phase: "unknown",
+        lastError: reason,
+      }),
+    );
+    return undefined;
+  } catch (error) {
+    const stateReason = `STATE 写回失败: ${errorMessage(error)}`;
+    logError("processor.state_write_failed", { reason: stateReason });
+    return stateReason;
   }
 }
 
@@ -589,7 +642,7 @@ async function restoreUnauthorizedChanges(
   workspace: VaultWorkspace,
   changes: { path: string; previousPath?: string }[],
   layout: ProcessorOptions["layout"],
-): Promise<void> {
+): Promise<string[]> {
   const paths = new Set<string>();
   for (const change of changes) {
     const names = changedPathNames(change);
@@ -597,13 +650,30 @@ async function restoreUnauthorizedChanges(
       for (const name of names) paths.add(name);
     }
   }
+  return restorePaths(workspace, [...paths]);
+}
+
+async function restorePaths(
+  workspace: VaultWorkspace,
+  paths: string[],
+): Promise<string[]> {
+  const errors: string[] = [];
   for (const relative of paths) {
     try {
       await workspace.restore(relative);
-    } catch {
-      /* best effort */
+    } catch (error) {
+      const reason = relative + ": " + errorMessage(error);
+      logError("processor.restore_failed", { path: relative, reason });
+      errors.push(reason);
     }
   }
+  return errors;
+}
+
+function appendRecoveryErrors(reason: string, errors: string[]): string {
+  return errors.length > 0
+    ? reason + "; 恢复失败: " + errors.join("; ")
+    : reason;
 }
 
 function createRoundId(clock: Clock): string {
@@ -693,7 +763,10 @@ async function verifyResearchInboxUnchanged(
       );
       await restoreInboxSnapshot(layout, before);
     } catch (restoreError) {
-      return `研究阶段无法检查 inbox，且恢复失败: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`;
+      const reason =
+        `研究阶段无法检查 inbox，且恢复失败: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`;
+      logError("processor.inbox_restore_failed", { reason });
+      return reason;
     }
     return `研究阶段修改了 inbox 非普通文件，已恢复原始收件项: ${error instanceof Error ? error.message : String(error)}`;
   }
@@ -703,7 +776,10 @@ async function verifyResearchInboxUnchanged(
   try {
     await restoreInboxSnapshot(layout, before);
   } catch (error) {
-    return `研究阶段修改 inbox，且恢复失败: ${error instanceof Error ? error.message : String(error)}`;
+    const reason =
+      `研究阶段修改 inbox，且恢复失败: ${error instanceof Error ? error.message : String(error)}`;
+    logError("processor.inbox_restore_failed", { reason });
+    return reason;
   }
   return "研究阶段不得修改 inbox，已恢复原始收件项";
 }
@@ -760,19 +836,47 @@ async function commitWorkingTreeBestEffort(
   publisher: VaultPublisher | undefined,
   layout: ProcessorOptions["layout"],
   message: string,
-): Promise<void> {
-  if (!publisher) return;
+): Promise<string | undefined> {
+  if (!publisher) return undefined;
   try {
     const changes = await workspace.listChanges();
     const safe = changes.filter((change) =>
       changedPathNames(change).every((changedPath) =>
-        isWhitelistedPath(changedPath, layout),
+        isFailurePublishPath(changedPath, layout),
       ),
     );
     const paths = unique(safe.flatMap(changedPathNames));
-    if (paths.length === 0) return;
-    await publisher.publish(paths, message);
-  } catch {
-    /* 失败路径的提交是尽力而为 */
+    if (paths.length === 0) return undefined;
+    const published = await publisher.publish(paths, message);
+    if (published.ok) return undefined;
+    const reason = published.reason ?? "失败路径发布失败";
+    logError("processor.failure_publish_failed", {
+      reason,
+      conflict: published.conflict ?? false,
+    });
+    return "失败路径发布失败: " + reason;
+  } catch (error) {
+    const reason = "失败路径发布失败: " + errorMessage(error);
+    logError("processor.failure_publish_failed", { reason });
+    return reason;
   }
+}
+
+function isFailurePublishPath(
+  changedPath: string,
+  layout: ProcessorOptions["layout"],
+): boolean {
+  if (!isWhitelistedPath(changedPath, layout)) return false;
+  const normalized = changedPath.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+  const inbox = layout.inboxDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  const quarantine = layout.quarantineDir
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "");
+  const isInboxPath = normalized === inbox || normalized.startsWith(inbox + "/");
+  if (!isInboxPath) return true;
+  return normalized === quarantine || normalized.startsWith(quarantine + "/");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

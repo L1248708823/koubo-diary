@@ -1,5 +1,11 @@
 import path from "node:path";
-import { isDiaryPath, isIdeaPath, isWhitelistedPath } from "../config.js";
+import { readFile } from "node:fs/promises";
+import {
+  isDiaryPath,
+  isIdeaPath,
+  isResearchPath,
+  isWhitelistedPath,
+} from "../config.js";
 import type {
   ChangedPath,
   Receipt,
@@ -178,6 +184,13 @@ export async function acceptRound(args: {
     return rejection(`仍有待处理未在回执交代: ${unaccounted.join(", ")}`);
   }
 
+  const researchLinkError = await validateChangedResearchLinks(
+    layout,
+    receipt.processed,
+    changes,
+  );
+  if (researchLinkError) return rejection(researchLinkError);
+
   return {
     ok: true,
     done: receipt.processed,
@@ -280,4 +293,47 @@ function receiptInboxes(receipt: Receipt): string[] {
     ...receipt.failed.map((item) => item.inbox),
     ...receipt.quarantine.map((item) => item.inbox),
   ];
+}
+
+async function validateChangedResearchLinks(
+  layout: VaultLayout,
+  processed: ReceiptItemDone[],
+  changes: ChangedPath[],
+): Promise<string | undefined> {
+  const changedPaths = new Set(
+    changes.flatMap(changedPathNames).map(normalize),
+  );
+  const sourcePaths = unique(
+    processed
+      .flatMap((item) => [item.diary, ...(item.idea ? [item.idea] : [])])
+      .filter(
+        (relative) =>
+          changedPaths.has(normalize(relative)) &&
+          (isDiaryPath(relative, layout) || isIdeaPath(relative, layout)),
+      ),
+  );
+  const researchPrefix = normalize(layout.researchDir) + "/";
+
+  for (const relative of sourcePaths) {
+    if (!(await pathExists(path.join(layout.vaultPath, relative)))) continue;
+    const body = await readFile(path.join(layout.vaultPath, relative), "utf8");
+    for (const rawTarget of extractWikilinkTargets(body)) {
+      const target = rawTarget.split("|")[0]?.split("#")[0]?.trim();
+      if (!target || !normalize(target).startsWith(researchPrefix)) continue;
+      const briefPath = normalize(target).endsWith(".md")
+        ? normalize(target)
+        : normalize(target) + ".md";
+      if (!isResearchPath(briefPath, layout)) {
+        return `研究简报路径不合法: ${target}`;
+      }
+      if (!(await pathExists(path.join(layout.vaultPath, briefPath)))) {
+        return `研究简报不存在: ${briefPath}`;
+      }
+    }
+  }
+  return undefined;
+}
+
+function extractWikilinkTargets(body: string): string[] {
+  return [...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => match[1] ?? "");
 }

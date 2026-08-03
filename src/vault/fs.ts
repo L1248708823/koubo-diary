@@ -34,8 +34,9 @@ export async function listPendingInbox(layout: VaultLayout): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(inboxPath);
-  } catch {
-    return [];
+  } catch (error) {
+    if (isMissingFile(error)) return [];
+    throw new Error(`读取收件箱失败: ${errorMessage(error)}`, { cause: error });
   }
   const pending: string[] = [];
   for (const name of entries) {
@@ -47,7 +48,13 @@ export async function listPendingInbox(layout: VaultLayout): Promise<string[]> {
       const { stat } = await import("node:fs/promises");
       const st = await stat(full);
       if (!st.isFile()) continue;
-    } catch {
+    } catch (error) {
+      if (!isMissingFile(error)) {
+        throw new Error(
+          `读取收件项失败: ${layout.inboxDir}/${name}: ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
       continue;
     }
     if (!name.endsWith(".md")) continue;
@@ -61,18 +68,27 @@ export async function pathExists(abs: string): Promise<boolean> {
   try {
     await access(abs);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingFile(error)) return false;
+    throw new Error(`检查路径失败: ${abs}: ${errorMessage(error)}`, {
+      cause: error,
+    });
   }
 }
 
 export async function readReceipt(layout: VaultLayout): Promise<unknown | null> {
   const p = path.join(layout.vaultPath, layout.processorDir, "last-run.json");
+  let raw: string;
   try {
-    const raw = await readFile(p, "utf8");
+    raw = await readFile(p, "utf8");
+  } catch (error) {
+    if (isMissingFile(error)) return null;
+    throw new Error(`读取回执失败: ${errorMessage(error)}`, { cause: error });
+  }
+  try {
     return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`解析回执失败: ${errorMessage(error)}`, { cause: error });
   }
 }
 
@@ -94,16 +110,20 @@ export async function readInboxFrontmatterAttempts(
   inboxRel: string,
 ): Promise<number> {
   const abs = path.join(layout.vaultPath, inboxRel);
+  let raw: string;
   try {
-    const raw = await readFile(abs, "utf8");
-    const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (!match) return 0;
-    const attemptsLine = match[1]?.match(/^attempts:\s*(\d+)\s*$/m);
-    if (!attemptsLine) return 0;
-    return Number(attemptsLine[1]);
-  } catch {
-    return 0;
+    raw = await readFile(abs, "utf8");
+  } catch (error) {
+    throw new Error(
+      `读取收件项 attempts 失败: ${inboxRel}: ${errorMessage(error)}`,
+      { cause: error },
+    );
   }
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return 0;
+  const attemptsLine = match[1]?.match(/^attempts:\s*(\d+)\s*$/m);
+  if (!attemptsLine) return 0;
+  return Number(attemptsLine[1]);
 }
 
 export async function bumpInboxAttempts(
@@ -201,4 +221,12 @@ export function makeInboxId(now: Date, ident?: string): { id: string; filename: 
   const tail = ident ?? shortId();
   const id = `${stamp}-${tail}`;
   return { id, filename: `${id}.md` };
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

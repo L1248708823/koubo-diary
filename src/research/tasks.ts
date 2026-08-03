@@ -82,6 +82,13 @@ export async function countPendingResearchTasks(
   return tasks.filter((task) => task.status === "pending").length;
 }
 
+export async function countUnfinishedResearchTasks(
+  layout: VaultLayout,
+): Promise<number> {
+  const tasks = recoverRunningResearchTasks(await readResearchTasks(layout));
+  return tasks.filter((task) => task.status !== "complete").length;
+}
+
 export async function countRunnableResearchTasks(
   layout: VaultLayout,
 ): Promise<number> {
@@ -179,11 +186,7 @@ function parseResearchTask(raw: unknown, fallbackTimestamp: string): ResearchTas
 }
 
 async function taskFileTimestamp(file: string): Promise<string> {
-  try {
-    return (await stat(file)).mtime.toISOString();
-  } catch {
-    return new Date().toISOString();
-  }
+  return (await stat(file)).mtime.toISOString();
 }
 
 function readTimestampField(

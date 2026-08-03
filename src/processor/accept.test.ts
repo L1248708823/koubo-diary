@@ -56,6 +56,76 @@ describe("processor acceptance", () => {
     }
   });
 
+  it("拒绝日记引用不存在的研究简报", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "不能提前引用研究简报");
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(
+      path.join(vault.root, diary),
+      `# 日记\n\n研究简报：[[${vault.layout.researchDir}/尚未生成]]\n`,
+      "utf8",
+    );
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox, status: "done", diary }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [{ path: diary, status: "M" }],
+      roundId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("研究简报不存在");
+    }
+  });
+
+  it("不因无关历史变更中的研究死链阻塞本轮", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "只验证当前日记");
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    const historicalDiary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 当前日记\n", "utf8");
+    await writeFile(
+      path.join(vault.root, historicalDiary),
+      `历史死链：[[${vault.layout.researchDir}/不存在]]\n`,
+      "utf8",
+    );
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox, status: "done", diary }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [
+        { path: diary, status: "M" },
+        { path: historicalDiary, status: "M" },
+      ],
+      roundId,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("拒绝同一 inbox 在回执中重复出现", async () => {
     const vault = await createTempVault();
     vaults.push(vault);

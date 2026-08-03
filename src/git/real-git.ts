@@ -67,7 +67,10 @@ export function createVaultWorkspace(opts: RealGitOptions): VaultWorkspace {
     },
     async listChanges(): Promise<ChangedPath[]> {
       const r = await run(cwd, ["status", "--porcelain", "-uall"]);
-      if (r.code !== 0) return [];
+      if (r.code !== 0) {
+        const failure = classifyGitFailure(r.stderr, r.stdout);
+        throw new Error(`git status 失败: ${failure.reason}`);
+      }
       const lines = r.stdout.split(/\r?\n/).filter(Boolean);
       const changes: ChangedPath[] = [];
       for (const line of lines) {
@@ -96,10 +99,27 @@ export function createVaultWorkspace(opts: RealGitOptions): VaultWorkspace {
       return changes;
     },
     async restore(relPath: string): Promise<void> {
-      if (path.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) return;
-      const tracked = await run(cwd, ["cat-file", "-e", `HEAD:${relPath}`]);
-      if (tracked.code === 0) {
-        await run(cwd, ["checkout", "HEAD", "--", relPath]);
+      if (path.isAbsolute(relPath) || relPath.split(/[\\/]/).includes("..")) {
+        throw new Error(`拒绝恢复非法路径: ${relPath}`);
+      }
+      const tracked = await run(cwd, [
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "HEAD",
+        "--",
+        relPath,
+      ]);
+      if (tracked.code !== 0) {
+        const failure = classifyGitFailure(tracked.stderr, tracked.stdout);
+        throw new Error(`git 恢复前查询失败: ${failure.reason}`);
+      }
+      if (tracked.stdout.trim().length > 0) {
+        const restored = await run(cwd, ["checkout", "HEAD", "--", relPath]);
+        if (restored.code !== 0) {
+          const failure = classifyGitFailure(restored.stderr, restored.stdout);
+          throw new Error(`git checkout 恢复失败: ${failure.reason}`);
+        }
         return;
       }
       await rm(path.join(cwd, relPath), { force: true });

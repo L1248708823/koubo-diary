@@ -5,7 +5,7 @@ import {
   validateResearchWriteback,
 } from "./brief.js";
 import {
-  countPendingResearchTasks,
+  countUnfinishedResearchTasks,
   countRunnableResearchTasks,
   dedupeResearchTasks,
   readResearchTasks,
@@ -29,29 +29,31 @@ export type ResearchStageResult = {
   error?: string;
 };
 
-export async function safePendingResearchCount(
+export async function safeUnfinishedResearchCount(
   layout: VaultLayout,
-): Promise<number | undefined> {
+): Promise<number> {
   try {
-    return await countPendingResearchTasks(layout);
+    return await countUnfinishedResearchTasks(layout);
   } catch (error) {
+    const message = errorMessage(error);
     logError("processor.research_state_read_failed", {
-      message: error instanceof Error ? error.message : String(error),
+      message,
     });
-    return undefined;
+    throw new Error(`研究任务状态读取失败: ${message}`, { cause: error });
   }
 }
 
 export async function safeRunnableResearchCount(
   layout: VaultLayout,
-): Promise<number | undefined> {
+): Promise<number> {
   try {
     return await countRunnableResearchTasks(layout);
   } catch (error) {
+    const message = errorMessage(error);
     logError("processor.research_state_read_failed", {
-      message: error instanceof Error ? error.message : String(error),
+      message,
     });
-    return undefined;
+    throw new Error(`研究任务状态读取失败: ${message}`, { cause: error });
   }
 }
 
@@ -100,15 +102,27 @@ export async function runResearchStage(args: {
       : [];
   const allPendingTasks = [...pendingTasks, ...retryTasks];
   const candidates = allPendingTasks.slice(0, Math.max(0, maxResearchPerRound));
-  if (!runner || candidates.length === 0) {
+  const unfinished = tasks.filter((task) => task.status !== "complete").length;
+  if (!runner) {
     return {
       processed: 0,
-      pending: tasks.filter((task) => task.status === "pending").length,
+      pending: unfinished,
+      progressed: false,
+      ...(unfinished > 0
+        ? { error: "research runner 不可用，仍有未完成研究任务" }
+        : {}),
+    };
+  }
+  if (candidates.length === 0) {
+    return {
+      processed: 0,
+      pending: unfinished,
       progressed: false,
     };
   }
 
   let processed = 0;
+  let firstFailure: string | undefined;
   const startedAt = Date.now();
   logInfo("processor.research_started", {
     selected: candidates.length,
@@ -137,20 +151,13 @@ export async function runResearchStage(args: {
           lastError: sourceError,
         };
       } else {
-        try {
-          outcome = await runner.run({
-            vaultPath: layout.vaultPath,
-            layout,
-            task: running,
-            now: clock.now(),
-            action: candidate.status === "pending" ? "start" : "refresh",
-          });
-        } catch (error) {
-          outcome = {
-            status: "blocked",
-            lastError: error instanceof Error ? error.message : String(error),
-          };
-        }
+        outcome = await runner.run({
+          vaultPath: layout.vaultPath,
+          layout,
+          task: running,
+          now: clock.now(),
+          action: candidate.status === "pending" ? "start" : "refresh",
+        });
       }
     }
 
@@ -193,19 +200,30 @@ export async function runResearchStage(args: {
     tasks = replaceResearchTask(tasks, completed);
     await writeResearchTasks(layout, tasks);
     processed += 1;
+    if (
+      firstFailure === undefined &&
+      (completed.status === "blocked" || completed.status === "partial")
+    ) {
+      firstFailure = `研究任务 ${completed.task_id} 未完成：${completed.last_error ?? completed.status}`;
+    }
     logInfo("processor.research_task_finished", {
       taskId: completed.task_id,
       status: completed.status,
     });
   }
 
-  const pending = tasks.filter((task) => task.status === "pending").length;
+  const pending = tasks.filter((task) => task.status !== "complete").length;
   logInfo("processor.research_finished", {
     processed,
     pending,
     durationMs: Date.now() - startedAt,
   });
-  return { processed, pending, progressed: processed > 0 };
+  return {
+    processed,
+    pending,
+    progressed: processed > 0,
+    ...(firstFailure ? { error: firstFailure } : {}),
+  };
 }
 
 export function researchDetail(result: ResearchStageResult): string {
@@ -258,4 +276,8 @@ async function validateResearchTaskSource(
     }
   }
   return undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

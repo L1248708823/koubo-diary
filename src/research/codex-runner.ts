@@ -12,6 +12,7 @@ import type {
 import {
   findResearchBriefForTask,
   markResearchPending,
+  validateResearchWriteback,
 } from "./brief.js";
 
 export type ResearchCliProcessInput = CliProcessOptions & {
@@ -101,6 +102,19 @@ export function createCodexResearchRunner(
         return {
           status: "blocked" as const,
           lastError: "Codex 研究 runner 完成但没有发现合法研究简报",
+        };
+      }
+      const writebackError = await validateResearchWriteback({
+        layout: ctx.layout,
+        task: ctx.task,
+        briefPath: brief,
+      });
+      if (writebackError) {
+        await markResearchPending(ctx, "partial", brief);
+        return {
+          status: "partial" as const,
+          brief,
+          lastError: writebackError,
         };
       }
       if (previousBrief === brief) {

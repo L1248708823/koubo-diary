@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createLocalVaultWorkspace } from "./local-vault.js";
 import { createTempVault, writeDiary, type TempVault } from "../testkit/temp-vault.js";
@@ -49,5 +49,16 @@ describe("local vault ops", () => {
     await workspace.restore(relative);
 
     expect(await readFile(absolute, "utf8")).toBe("");
+  });
+
+  it("快照读取失败时不返回空变更", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const workspace = createLocalVaultWorkspace(vault.root);
+
+    await workspace.prepare();
+    await rm(vault.root, { recursive: true, force: true });
+
+    await expect(workspace.listChanges()).rejects.toThrow();
   });
 });

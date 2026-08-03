@@ -5,12 +5,7 @@ import type { ChangedPath, GitResult, VaultWorkspace } from "../types.js";
 type FileSnapshot = Map<string, Buffer>;
 
 async function walkFiles(dir: string, base = ""): Promise<string[]> {
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch {
-    return [];
-  }
+  const names = await readdir(dir);
 
   const files: string[] = [];
   for (const name of names) {

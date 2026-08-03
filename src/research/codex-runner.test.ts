@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   createResearchBriefRunner,
@@ -111,6 +111,43 @@ describe("Codex research runner", () => {
     expect(await readFile(path.join(vault.root, context.task.source_diary!), "utf8")).toContain(
       "needs_research: true",
     );
+  });
+
+  it("CLI 写出受限简报时不报告 complete", async () => {
+    const { vault, context } = await createResearchContext(vaults);
+    const brief = `${context.layout.researchDir}/受限简报.md`;
+
+    const result = await createCodexResearchRunner({
+      runCommand: async ({ context: runContext }) => {
+        await mkdir(
+          path.join(runContext.vaultPath, runContext.layout.researchDir),
+          { recursive: true },
+        );
+        await writeFile(
+          path.join(runContext.vaultPath, brief),
+          [
+            "---",
+            "type: research-brief",
+            `task_id: ${runContext.task.task_id}`,
+            "research_status: completed_with_limits",
+            `question: \"${runContext.task.question}\"`,
+            `source_diary: \"[[${runContext.task.source_diary!.replace(/\.md$/, "")}]]\"`,
+            "---",
+            "",
+            "# 受限简报",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      },
+    }).run(context);
+
+    expect(result.status).toBe("partial");
+    expect(result.brief).toBe(brief);
+    expect(result.lastError).toContain("状态未完成");
+    expect(
+      await readFile(path.join(vault.root, context.task.source_diary!), "utf8"),
+    ).toContain("needs_research: true");
   });
 
   it("研究参数显式映射到 Codex exec", () => {

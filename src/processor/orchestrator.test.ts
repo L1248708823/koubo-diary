@@ -24,7 +24,12 @@ import {
   createResearchBriefRunner,
   type ResearchEvidenceBundle,
 } from "../research/brief.js";
-import type { AgentContext, AgentRunner, ResearchRunner } from "../types.js";
+import type {
+  AgentContext,
+  AgentRunner,
+  ResearchRunner,
+  VaultPublisher,
+} from "../types.js";
 
 describe("processor orchestrator (seam 1)", () => {
   const vaults: TempVault[] = [];
@@ -65,6 +70,198 @@ describe("processor orchestrator (seam 1)", () => {
     expect(result.status).toBe("empty");
     expect(result.agentInvoked).toBe(false);
     expect(agentCalls).toBe(0);
+  });
+
+  it("收件箱读取错误时返回失败并保留原因，不调用 agent", async () => {
+    const { vault, lock, workspace, clock } = await setup();
+    const brokenInbox = path.join(vault.root, "broken-inbox");
+    await writeFile(brokenInbox, "无法作为目录读取\n", "utf8");
+    vault.options.layout.inboxDir = "broken-inbox";
+    let agentCalls = 0;
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent: {
+        async run() {
+          agentCalls += 1;
+        },
+      },
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toMatch(/收件箱|目录|ENOTDIR|not a directory/i);
+    expect(agentCalls).toBe(0);
+  });
+
+  it("工作区状态读取失败时停止验收并返回原因", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    await seedInbox(vault.layout, "工作区状态读取失败");
+    await captureHead();
+    const failingWorkspace = {
+      ...workspace,
+      async listChanges() {
+        throw new Error("git status 读取失败");
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace: failingWorkspace,
+      lock,
+      agent: { async run() {} },
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("git status 读取失败");
+  });
+
+  it("STATE 写回失败时返回失败原因", async () => {
+    const { vault, lock, workspace, clock } = await setup();
+    await mkdir(
+      path.join(vault.root, vault.options.layout.processorDir, "STATE.md"),
+    );
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent: { async run() {} },
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toMatch(/STATE|EISDIR|目录/i);
+  });
+
+  it("失败路径发布失败时返回发布原因", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const lock = createMemoryLock();
+    const { workspace, publisher, controls, captureHead } =
+      await createFakeVaultAccess(vault.layout);
+    const clock = fixedClock();
+    const inboxRel = await seedInbox(vault.layout, "失败路径发布");
+    await captureHead();
+    controls.commitResult = {
+      ok: false,
+      reason: "失败路径 commit 失败",
+      committed: false,
+    };
+
+    const agent = createFakeAgent(async ({ pendingInbox }) => ({
+      ok: true,
+      round_ended_at: "2026-07-29T12:05:00+08:00",
+      processed: [
+        {
+          inbox: pendingInbox[0] ?? inboxRel,
+          status: "done",
+          diary: vault.layout.diaryDir + "/2026/2026-07/2026-07-29.md",
+        },
+      ],
+      failed: [],
+      quarantine: [],
+    }));
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      publisher,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("失败路径 commit 失败");
+  });
+
+  it("研究任务状态读取失败时保留原始原因", async () => {
+    const { vault, lock, workspace, clock } = await setup();
+    await writeFile(
+      path.join(vault.root, vault.layout.processorDir, "research-tasks.json"),
+      JSON.stringify({ invalid: true }),
+      "utf8",
+    );
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent: { async run() {} },
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("研究任务状态格式不合法");
+  });
+
+  it("没有 research runner 时明确报告未完成研究", async () => {
+    const { vault, lock, workspace, clock } = await setup();
+    const diary = await writeDiary(
+      vault.layout,
+      "2026/2026-07/2026-07-29.md",
+      "等待研究来源。\n",
+    );
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "research-without-runner",
+        sourceDiary: diary,
+        question: "没有 runner 时是否仍需显示积压？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent: { async run() {} },
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.researchPending).toBe(1);
+    expect(result.reason).toContain("research runner");
+  });
+
+  it("研究 runner 的未知异常进入处理轮失败", async () => {
+    const { vault, lock, workspace, clock } = await setup();
+    const diary = await writeDiary(
+      vault.layout,
+      "2026/2026-07/2026-07-29.md",
+      "研究 runner 异常。\n",
+    );
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "research-runner-crash",
+        sourceDiary: diary,
+        question: "未知异常如何报告？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+    const researchRunner: ResearchRunner = {
+      async run() {
+        throw new Error("研究 runner 程序错误");
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent: { async run() {} },
+      researchRunner,
+      clock,
+    });
+    const tasks = await readResearchTasks(vault.layout);
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("研究 runner 程序错误");
+    expect(tasks[0]?.status).toBe("running");
   });
 
   it("旧版研究任务缺少时间字段时，处理轮仍能进入研究阶段", async () => {
@@ -304,12 +501,66 @@ describe("processor orchestrator (seam 1)", () => {
     });
 
     const tasks = await readResearchTasks(vault.layout);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("证据仍然不足");
     expect(result.researchProcessed).toBe(1);
     expect(researchCalls).toBe(1);
     expect(tasks[0]?.status).toBe("partial");
     expect(await pathExists(path.join(vault.root, diaryRel))).toBe(true);
     expect(await pathExists(path.join(vault.root, inboxRel))).toBe(false);
+  });
+
+  it("研究任务 blocked 时不把轮次伪装成成功，并保留未完成数量", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "需要外部资料核实的一条");
+    await captureHead();
+    const diaryRel = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "研究状态测试\n");
+      await writeResearchTasks(layout, [
+        createResearchTask({
+          taskId: "research-blocked-state",
+          sourceDiary: diaryRel,
+          question: "这个问题暂时无法访问来源时怎么办？",
+          now: clock.now().toISOString(),
+        }),
+      ]);
+      return {
+        ok: true,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [
+          { inbox: pendingInbox[0]!, status: "done", diary: diaryRel },
+        ],
+        failed: [],
+        quarantine: [],
+      };
+    });
+    const researchRunner: ResearchRunner = {
+      async run() {
+        return { status: "blocked", lastError: "来源暂不可用" };
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner,
+      clock,
+    });
+
+    const state = await readFile(
+      path.join(vault.root, vault.layout.processorDir, "STATE.md"),
+      "utf8",
+    );
+    expect(result.status).toBe("failed");
+    expect(result.researchPending).toBe(1);
+    expect(result.reason).toContain("来源暂不可用");
+    expect(state).toContain("- status: failed");
+    expect(state).toContain("- research_pending: 1");
+    expect(state).toContain("来源暂不可用");
   });
 
   it("只有研究任务的轮次也会完成白名单检查并发布写回", async () => {
@@ -541,13 +792,13 @@ describe("processor orchestrator (seam 1)", () => {
       clock,
     });
 
-    expect(first.status).toBe("success");
+    expect(first.status).toBe("failed");
     expect(first.researchProcessed).toBe(1);
-    expect(first.researchPending).toBe(1);
-    expect(second.status).toBe("success");
+    expect(first.researchPending).toBe(2);
+    expect(second.status).toBe("failed");
     expect(second.agentInvoked).toBe(false);
     expect(second.researchProcessed).toBe(1);
-    expect(second.researchPending).toBe(0);
+    expect(second.researchPending).toBe(2);
     expect(calls).toEqual(["research-a", "research-b"]);
   });
 
@@ -1062,6 +1313,97 @@ describe("processor orchestrator (seam 1)", () => {
     void controls;
   });
 
+  it("白名单外路径恢复失败时保留恢复原因", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "恢复失败测试");
+    await captureHead();
+    let publishedPaths: string[] = [];
+    const failingWorkspace = {
+      ...workspace,
+      async listChanges() {
+        const changes = await workspace.listChanges();
+        return [...changes, { path: "secrets/token.txt", status: "A" }];
+      },
+      async restore() {
+        throw new Error("Git checkout 恢复失败");
+      },
+    };
+    const agent = createFakeAgent(async ({ layout }) => {
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "恢复失败\\n");
+      await writeFile(
+        path.join(layout.vaultPath, inboxRel),
+        "agent 修改了原始收件项\\n",
+        "utf8",
+      );
+      return {
+        ok: true,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [
+          {
+            inbox: inboxRel,
+            status: "done",
+            diary:
+              layout.diaryDir + "/2026/2026-07/2026-07-29.md",
+          },
+        ],
+        failed: [],
+        quarantine: [],
+      };
+    });
+    const publisher: VaultPublisher = {
+      async publish(paths) {
+        publishedPaths = paths;
+        return { ok: true };
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace: failingWorkspace,
+      publisher,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("Git checkout 恢复失败");
+    expect(publishedPaths).not.toContain(inboxRel);
+  });
+
+  it("收件项 attempts 读取失败时不静默继续", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "attempts 读取失败");
+    await captureHead();
+    const noOpRestoreWorkspace = {
+      ...workspace,
+      async restore() {},
+    };
+    const agent = createFakeAgent(async ({ layout }) => {
+      const absolute = path.join(layout.vaultPath, inboxRel);
+      await rename(absolute, absolute + ".moved");
+      await mkdir(absolute);
+      return {
+        ok: false,
+        round_ended_at: "2026-07-29T12:05:00+08:00",
+        processed: [],
+        failed: [{ inbox: inboxRel, status: "failed", error: "保留原文" }],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace: noOpRestoreWorkspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toMatch(/attempts|EISDIR|目录/i);
+  });
+
   it("回执漏报快照内条目：异常轮失败，不删任何 inbox", async () => {
     const { vault, lock, workspace, captureHead, clock } = await setup();
     const a = await seedInbox(vault.layout, "会申报", {
@@ -1118,6 +1460,26 @@ describe("processor orchestrator (seam 1)", () => {
     expect(result.status).toBe("locked");
     expect(result.agentInvoked).toBe(false);
     expect(agentCalls).toBe(0);
+  });
+
+  it("锁文件 I/O 失败时返回失败原因", async () => {
+    const { vault, workspace, clock } = await setup();
+    const lock = {
+      async tryAcquire() {
+        throw new Error("锁文件写入失败");
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent: { async run() {} },
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("锁文件写入失败");
   });
 });
 
