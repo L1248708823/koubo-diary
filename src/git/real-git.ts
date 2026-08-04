@@ -108,7 +108,13 @@ export function createVaultWorkspace(opts: RealGitOptions): VaultWorkspace {
           run,
         );
         if (validation) throw new Error(`Git 仓库预检失败: ${validation.reason}`);
-        const r = await run(["status", "--porcelain", "-uall"]);
+        const r = await run([
+          "-c",
+          "core.quotePath=false",
+          "status",
+          "--porcelain",
+          "-uall",
+        ]);
         if (r.code !== 0) {
           const failure = classifyGitFailure(r.stderr, r.stdout);
           throw new Error(`git status 失败: ${failure.reason}`);
