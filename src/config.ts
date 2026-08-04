@@ -42,6 +42,20 @@ export function isIdeaPath(path: string, layout: VaultLayout): boolean {
   return isFlatMarkdownPath(path, layout.ideasDir);
 }
 
+export function isDatedIdeaPath(
+  path: string,
+  layout: VaultLayout,
+  captureDate: string,
+): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(captureDate) || !isIdeaPath(path, layout)) {
+    return false;
+  }
+  const normalized = normalizeRelativePath(path);
+  const prefix = `${normalizeDir(layout.ideasDir)}/`;
+  const filename = normalized.slice(prefix.length);
+  return new RegExp(`^${captureDate}-.+\\.md$`).test(filename);
+}
+
 export function isResearchPath(path: string, layout: VaultLayout): boolean {
   return isFlatMarkdownPath(path, layout.researchDir);
 }

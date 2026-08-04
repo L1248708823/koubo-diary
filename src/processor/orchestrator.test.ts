@@ -386,7 +386,7 @@ describe("processor orchestrator (seam 1)", () => {
     const inbox = await seedInbox(vault.layout, "一个同时需要长期回看和核实的产品想法");
     await captureHead();
     const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
-    const idea = `${vault.layout.ideasDir}/个人工具验证.md`;
+    const idea = `${vault.layout.ideasDir}/2026-07-29-个人工具验证.md`;
     const question = "这个个人工具想法的最小验证路径是什么？";
 
     const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
@@ -397,7 +397,7 @@ describe("processor orchestrator (seam 1)", () => {
       );
       await writeIdea(
         layout,
-        "个人工具验证.md",
+        "2026-07-29-个人工具验证.md",
         [
           "---",
           "needs_research: true",
@@ -681,6 +681,66 @@ describe("processor orchestrator (seam 1)", () => {
     expect(await readFile(path.join(vault.root, diaryRel), "utf8")).toContain(
       "needs_research: false",
     );
+  });
+
+  it("把顶层想法和研究候选传给 agent，排除嵌套及无关路径", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    await writeIdea(vault.layout, "2026-07-29-已有想法.md", "已有想法\n");
+    await mkdir(
+      path.join(vault.root, vault.layout.ideasDir, "nested"),
+      { recursive: true },
+    );
+    await writeFile(
+      path.join(vault.root, vault.layout.ideasDir, "nested", "不应读取.md"),
+      "嵌套想法\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(vault.root, vault.layout.researchDir, "已有研究.md"),
+      "已有研究\n",
+      "utf8",
+    );
+    await mkdir(
+      path.join(vault.root, vault.layout.researchDir, "nested"),
+      { recursive: true },
+    );
+    await writeFile(
+      path.join(vault.root, vault.layout.researchDir, "nested", "不应读取.md"),
+      "嵌套研究\n",
+      "utf8",
+    );
+    const inbox = await seedInbox(vault.layout, "关联候选范围测试");
+    await captureHead();
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+    let received: AgentContext | undefined;
+    const agent: AgentRunner = {
+      async run(ctx) {
+        received = ctx;
+        await writeDiary(vault.layout, "2026/2026-07/2026-07-29.md", "已处理\n");
+        await writeReceipt(vault.layout, {
+          ok: true,
+          round_id: ctx.roundId,
+          round_ended_at: clock.now().toISOString(),
+          processed: [{ inbox, status: "done", diary }],
+          failed: [],
+          quarantine: [],
+        });
+      },
+    };
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("success");
+    expect(received?.associationCandidates).toEqual({
+      ideas: ["Yan帳/想法/2026-07-29-已有想法.md"],
+      research: ["Yan帳/研究/已有研究.md"],
+    });
   });
 
   it("研究 runner 修改 inbox 时失败并恢复脚本已保留的收件项", async () => {

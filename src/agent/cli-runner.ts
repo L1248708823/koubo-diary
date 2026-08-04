@@ -29,7 +29,7 @@ export type CliProcessOptions = {
 
 const DEFAULT_CAPACITY_RETRIES = 2;
 const DEFAULT_CAPACITY_RETRY_DELAY_MS = 3_000;
-export const PROCESSOR_PROMPT_VERSION = "scope-v4-diary-timestamp";
+export const PROCESSOR_PROMPT_VERSION = "scope-v5-association-ideas-model";
 
 /**
  * 在本处理环可见的契约上，两个 CLI 都是“改工作树并写回执”；provider 差异由各自 adapter 封装。
@@ -86,6 +86,18 @@ export function buildProcessorPrompt(
   const research = ctx.layout.researchDir;
   const processor = ctx.layout.processorDir;
   const staging = ctx.layout.stagingDir;
+  const associationCandidates = ctx.associationCandidates ?? {
+    ideas: [],
+    research: [],
+  };
+  const ideaCandidates = associationCandidates.ideas.length
+    ? associationCandidates.ideas.map((candidate) => `- ${candidate}`).join("\n")
+    : "（无）";
+  const researchCandidates = associationCandidates.research.length
+    ? associationCandidates.research
+        .map((candidate) => `- ${candidate}`)
+        .join("\n")
+    : "（无）";
   const receiptSchema = [
     "{",
     '  "ok": true,',
@@ -95,7 +107,8 @@ export function buildProcessorPrompt(
     "    {",
     `      "inbox": "${inbox}/文件名.md",`,
     '      "status": "done",',
-    `      "diary": "${diary}/YYYY/YYYY-MM/YYYY-MM-DD.md"`,
+    `      "diary": "${diary}/YYYY/YYYY-MM/YYYY-MM-DD.md",`,
+    `      "ideas": ["${ideas}/YYYY-MM-DD-短标题.md"]`,
     "    }",
     "  ],",
     '  "failed": [],',
@@ -114,7 +127,10 @@ export function buildProcessorPrompt(
     "处理边界（优先级高于工作区内其它说明）：",
     "- 收件箱输入只能来自本轮快照列出的 pendingInbox 文件；不得读取列表之外的收件箱文件。",
     `- 除收件箱外，只能用已知完整路径读取对应日期的目标日记、${processor}/research-tasks.json 和 ${processor}/last-run.json；不得借此扫描目录。`,
-    `- 文件隔离总则：可读文件仅限本轮 pendingInbox、对应日期的目标日记、${processor}/research-tasks.json、${processor}/last-run.json，以及已知完整路径的 ${ideas}/、${research}/ 目标文件；可写文件仅限 ${staging}/、${processor}/、${diary}/、${ideas}/ 和 ${research}/ 的本轮目标文件。除此之外不得读取、列出、搜索、测试、创建、修改或删除任何文件。`,
+    `- 文件隔离总则：可读文件仅限本轮 pendingInbox、对应日期的目标日记、${processor}/research-tasks.json、${processor}/last-run.json，以及已知完整路径的 ${ideas}/、${research}/ 目标文件；可写文件仅限 ${staging}/、${processor}/、${diary}/ 和 ${ideas}/ 的本轮目标文件。除此之外不得读取、列出、搜索、测试、创建、修改或删除任何文件。`,
+    `- 关联判断候选仅限下面列出的 ${ideas}/ 和 ${research}/ 直接子 Markdown；只能读取上方列出的关联候选文件，不得自行列目录、搜索或读取其它路径。`,
+    `  想法候选：\n${ideaCandidates}`,
+    `  研究候选：\n${researchCandidates}`,
     "- 研究任务记录必须包含 task_id、source_diary 或 source_idea、question、status、created_at、updated_at；时间使用 round_id 中的时间。",
     "- 禁止扫描、列出或搜索整个 vault；不得使用 rg --files、rg ... .、Get-ChildItem、dir、tree 或递归遍历来寻找文件。",
     "- 禁止枚举环境变量；不得使用 Get-ChildItem Env:，不得读取父目录、工具仓、.git、.env、密钥或临时目录。",
@@ -124,27 +140,29 @@ export function buildProcessorPrompt(
     "",
     "路径约定：",
     `- 日记前缀：${diary}/  → 文件 ${diary}/YYYY/YYYY-MM/YYYY-MM-DD.md`,
-    `- 想法路径：${ideas}/短标题.md，文件必须直接位于该目录（一条一文件；v1 不归档）`,
+    `- 想法路径：${ideas}/YYYY-MM-DD-短标题.md，文件必须直接位于该目录（一条一文件；v1 不归档）`,
     `- 日记树下的 ${ideas}/ 子目录不是想法目录，禁止在那里创建想法文件`,
     `- 研究目录：${research}/，研究简报由独立研究任务写入；研究任务状态：${processor}/research-tasks.json`,
     `- 收件箱：${inbox}/；状态与回执：${processor}/；同轮草稿：${staging}/`,
+    "- 想法只有在内容明确形成可脱离当天回看的观点、假设、创意或方法时创建；模糊念头只留在日记，‘我想’、‘我发现’等词不能单独触发想法。",
+    "- 新建想法文件名必须使用收件项 captured_at 的日期；明确延续已有想法时更新原文件并保留旧正文和旧来源，关系不清楚时不自动合并。",
     "",
     "硬性约束：",
-    `1. 只改白名单路径：${inbox}（勿删文件）、${staging}、${processor}、${diary}、${ideas}、${research}。`,
+    `1. 只改内容处理允许路径：${staging}、${processor}、${diary}、${ideas}；${inbox}（勿删文件）和 ${research} 只能按本提示读取，不能修改。`,
     "2. 不得执行任何 git 命令，包括 status、ls-files、commit、push、pull 和 config。",
     `3. 不要删除 ${inbox} 下的文件；只在回执里声明 done/failed/quarantine。`,
-    "4. 写回以日记为轴；可选想法并互链（日记=钩子+链接，想法=全文）；待查登记研究任务，不在本阶段联网。",
+    "4. 写回以日记为轴；可选一个或多个想法并互链（日记=钩子+链接，想法=全文）；待查登记研究任务，不在本阶段联网。",
     "日记写回格式：每条 done 收件项必须在对应日期日记中新增一个时间条目；日期和显示时间必须来自该收件项 frontmatter 的 captured_at，按运行时区转换。",
     "每条新增日记内容必须以 `- HH:mm ` 开头；无 Idea 时写时间戳和轻整理短段，有 Idea 时写时间戳、短钩子和实际想法 wikilink。",
-    "同一天的多条记录合并到同一篇日记，并按 captured_at 的先后顺序写入；已有日记内容保留，重跑同一 inbox id 不得重复追加。",
+    "同一天的多条记录合并到同一篇日记，并按 captured_at 升序插入或写入；已有日记内容保留，重跑同一 inbox id 不得重复追加，不得跨收件项合并句子。",
     "时间戳不可省略，不得使用 round_id、处理时间、当前系统时间或正文中用户自写的时间替代 captured_at；正文中的自写时间属于原始内容，若与前缀相同只保留一次。",
-    "5. 轻整理：去赘词/重复、保语气；禁止升格代写、扩写未说内容、伪调研结论。",
+    "5. 轻整理：只改明显错别字、标点、断句和排版；只有确定不影响意思、情绪和语气时才删机械卡顿或改口重复，强调性重复、犹豫和未决问题必须保留；禁止升格代写、扩写未说内容、伪调研结论。",
     `6. 结束后必须写出 ${processor}/last-run.json；只能使用下方回执格式，不要使用旧版 items 或 processed_at 字段。`,
     "回执 JSON schema：",
     "```json",
     receiptSchema,
     "```",
-    "processed 只放 status=done 的条目；failed 必须包含 inbox、status=failed、error；quarantine 必须包含 inbox、status=quarantine。",
+    "processed 只放 status=done 的条目；想法写入一个或多个时使用 ideas 数组，数组中的每个路径都必须是真实顶层文件；failed 必须包含 inbox、status=failed、error；quarantine 必须包含 inbox、status=quarantine。",
     "每条本轮快照 inbox 必须且只能在 processed、failed、quarantine 其中一个数组出现一次；回执中的 round_id 必须逐字等于本轮 round_id。",
     "7. 快照内每条 inbox 都必须在回执中交代，禁止漏报。",
   ].join("\n");

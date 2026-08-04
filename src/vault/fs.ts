@@ -64,6 +64,17 @@ export async function listPendingInbox(layout: VaultLayout): Promise<string[]> {
   return pending;
 }
 
+export async function listAssociationCandidates(layout: VaultLayout): Promise<{
+  ideas: string[];
+  research: string[];
+}> {
+  const [ideas, research] = await Promise.all([
+    listTopLevelMarkdown(layout.vaultPath, layout.ideasDir),
+    listTopLevelMarkdown(layout.vaultPath, layout.researchDir),
+  ]);
+  return { ideas, research };
+}
+
 export async function pathExists(abs: string): Promise<boolean> {
   try {
     await access(abs);
@@ -201,6 +212,28 @@ export async function writeInboxEntry(
   ].join("\n");
   await writeFile(path.join(layout.vaultPath, rel), body, "utf8");
   return rel;
+}
+
+async function listTopLevelMarkdown(
+  vaultPath: string,
+  relativeDir: string,
+): Promise<string[]> {
+  const normalizedDir = relativeDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  const directory = path.join(vaultPath, normalizedDir);
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingFile(error)) return [];
+    throw new Error(`读取关联目录失败: ${normalizedDir}: ${errorMessage(error)}`, {
+      cause: error,
+    });
+  }
+
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => `${normalizedDir}/${entry.name}`)
+    .sort();
 }
 
 export function shortId(length = 6): string {

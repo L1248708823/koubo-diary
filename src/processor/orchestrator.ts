@@ -21,6 +21,7 @@ import type {
 import {
   bumpInboxAttempts,
   deleteInboxFile,
+  listAssociationCandidates,
   listPendingInbox,
   moveToQuarantine,
   pathExists,
@@ -282,6 +283,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
 
     const pendingInbox = allPending.slice(0, options.maxPerRound);
     const snapshotInboxPaths = [...pendingInbox];
+    const associationCandidates = await listAssociationCandidates(layout);
     const roundId = createRoundId(clock);
 
     const agentStartedAt = Date.now();
@@ -297,6 +299,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
         maxPerRound: options.maxPerRound,
         pendingInbox,
         roundId,
+        associationCandidates,
       });
     } catch (error) {
       logError("processor.agent_failed", {

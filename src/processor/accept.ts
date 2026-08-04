@@ -2,6 +2,7 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import {
   isDiaryPath,
+  isDatedIdeaPath,
   isIdeaPath,
   isResearchPath,
   isWhitelistedPath,
@@ -50,6 +51,7 @@ async function findRecoveryPaths(
     for (const changedPath of changedPathNames(change)) {
       if (
         !isWhitelistedPath(changedPath, layout) ||
+        isResearchPath(changedPath, layout) ||
         (isAgentOwnedInboxPath(changedPath, layout) &&
           !(await isConcurrentInboxAddition(
             change,
@@ -108,11 +110,14 @@ function unsafeChangeFailure(
   recoveryPaths: string[],
 ): AcceptanceFail {
   const inboxPath = recoveryPaths.find((p) => isAgentOwnedInboxPath(p, layout));
+  const researchPath = recoveryPaths.find((p) => isResearchPath(p, layout));
   return {
     ok: false,
     reason: inboxPath
       ? `agent 不得修改 inbox: ${inboxPath}`
-      : `白名单外路径变更: ${recoveryPaths[0]}`,
+      : researchPath
+        ? `内容整理 agent 不得写入研究目录: ${researchPath}`
+        : `白名单外路径变更: ${recoveryPaths[0]}`,
     recoveryPaths,
   };
 }
@@ -182,13 +187,25 @@ export async function acceptRound(args: {
     if (!(await pathExists(diaryAbs))) {
       return rejection(`done 但缺 diary 文件: ${item.diary}`);
     }
-    if (item.idea !== undefined) {
-      if (!isIdeaPath(item.idea, layout)) {
-        return rejection(`idea 路径必须是 ${layout.ideasDir}/文件名.md: ${item.idea}`);
+    let captureDate: string | undefined;
+    for (const idea of receiptIdeaPaths(item)) {
+      if (!isIdeaPath(idea, layout)) {
+        return rejection(`idea 路径必须是 ${layout.ideasDir}/文件名.md: ${idea}`);
       }
-      const ideaAbs = path.join(layout.vaultPath, item.idea);
+      if (isNewChangedPath(idea, changes)) {
+        captureDate ??= await readInboxCaptureDate(layout, item.inbox);
+        if (
+          captureDate === undefined ||
+          !isDatedIdeaPath(idea, layout, captureDate)
+        ) {
+          return rejection(
+            `新建 idea 文件名必须以收件项 captured_at 日期 ${captureDate ?? "未知"} 开头: ${idea}`,
+          );
+        }
+      }
+      const ideaAbs = path.join(layout.vaultPath, idea);
       if (!(await pathExists(ideaAbs))) {
-        return rejection(`done 声明了 idea 但文件不存在: ${item.idea}`);
+        return rejection(`done 声明了 idea 但文件不存在: ${idea}`);
       }
     }
     // inbox must still exist pre-script-delete
@@ -267,7 +284,13 @@ function isValidReceiptShape(r: unknown): r is Receipt {
       typeof item.inbox !== "string" ||
       item.status !== "done" ||
       typeof item.diary !== "string" ||
-      (item.idea !== undefined && typeof item.idea !== "string")
+      (item.idea !== undefined && typeof item.idea !== "string") ||
+      (item.ideas !== undefined &&
+        (!Array.isArray(item.ideas) ||
+          !item.ideas.every(
+            (idea): idea is string =>
+              typeof idea === "string" && idea.length > 0,
+          )))
     ) {
       return false;
     }
@@ -310,12 +333,41 @@ function findDuplicateInbox(receipt: Receipt): string | null {
 function findDuplicateIdea(receipt: Receipt): string | null {
   const seen = new Set<string>();
   for (const item of receipt.processed) {
-    if (item.idea === undefined) continue;
-    const normalized = normalize(item.idea);
-    if (seen.has(normalized)) return normalized;
-    seen.add(normalized);
+    for (const idea of receiptIdeaPaths(item)) {
+      const normalized = normalize(idea);
+      if (seen.has(normalized)) return normalized;
+      seen.add(normalized);
+    }
   }
   return null;
+}
+
+function receiptIdeaPaths(item: ReceiptItemDone): string[] {
+  return [
+    ...(item.idea === undefined ? [] : [item.idea]),
+    ...(item.ideas ?? []),
+  ];
+}
+
+function isNewChangedPath(pathValue: string, changes: ChangedPath[]): boolean {
+  const normalized = normalize(pathValue);
+  return changes.some(
+    (change) =>
+      change.previousPath === undefined &&
+      normalize(change.path) === normalized &&
+      (change.status.startsWith("A") || change.status.includes("?")),
+  );
+}
+
+async function readInboxCaptureDate(
+  layout: VaultLayout,
+  inbox: string,
+): Promise<string | undefined> {
+  const body = await readFile(path.join(layout.vaultPath, inbox), "utf8");
+  const frontmatter = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  return frontmatter?.[1]?.match(
+    /^captured_at:\s*(\d{4}-\d{2}-\d{2})/m,
+  )?.[1];
 }
 
 function findOutOfRoundInbox(
@@ -343,7 +395,7 @@ async function validateChangedResearchLinks(
   );
   const sourcePaths = unique(
     processed
-      .flatMap((item) => [item.diary, ...(item.idea ? [item.idea] : [])])
+      .flatMap((item) => [item.diary, ...receiptIdeaPaths(item)])
       .filter(
         (relative) =>
           changedPaths.has(normalize(relative)) &&

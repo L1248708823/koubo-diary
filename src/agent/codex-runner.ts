@@ -5,6 +5,8 @@ export type CodexAgentOptions = {
   /** Windows 通常填 codex.cmd；Linux/WSL 通常填 codex。 */
   bin?: string;
   skill?: string;
+  model?: string;
+  reasoningEffort?: string;
   extraArgs?: string[];
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
@@ -18,6 +20,12 @@ export function createCodexAgentRunner(
     process.env.CODEX_BIN ??
     (process.platform === "win32" ? "codex.cmd" : "codex");
   const skill = options.skill ?? process.env.PROCESSOR_SKILL ?? "处理收件箱";
+  const model =
+    options.model ?? process.env.PROCESSOR_MODEL ?? "gpt-5.6-luna";
+  const reasoningEffort =
+    options.reasoningEffort ??
+    process.env.PROCESSOR_REASONING_EFFORT ??
+    "max";
 
   return createCliAgentRunner({
     provider: "Codex",
@@ -28,14 +36,26 @@ export function createCodexAgentRunner(
     timeoutMs: options.timeoutMs ?? 10 * 60_000,
     promptTransport: "stdin",
     buildArgs(_prompt, extraArgs) {
-      return [
-        "exec",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "-s",
-        "workspace-write",
-        ...extraArgs,
-      ];
+      return buildCodexAgentArgs({ model, reasoningEffort, extraArgs });
     },
   });
+}
+
+export function buildCodexAgentArgs(args: {
+  model: string;
+  reasoningEffort: string;
+  extraArgs?: string[];
+}): string[] {
+  return [
+    "exec",
+    "--ephemeral",
+    "--skip-git-repo-check",
+    "-s",
+    "workspace-write",
+    "-m",
+    args.model,
+    "-c",
+    `model_reasoning_effort=${JSON.stringify(args.reasoningEffort)}`,
+    ...(args.extraArgs ?? []),
+  ];
 }

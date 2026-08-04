@@ -43,7 +43,9 @@ export type ReceiptItemDone = {
   inbox: string;
   status: "done";
   diary: string;
+  /** 兼容 v1 单想法回执；新回执使用 ideas 表达一条输入的多个想法。 */
   idea?: string;
+  ideas?: string[];
   needs_research?: boolean;
   notes?: string;
 };
@@ -166,6 +168,11 @@ export type AgentContext = {
   maxPerRound: number;
   pendingInbox: string[];
   roundId: string;
+  /** 编排器列出的、仅用于关联判断的顶层 Markdown 文件。 */
+  associationCandidates?: {
+    ideas: string[];
+    research: string[];
+  };
 };
 
 export type AgentRunner = {

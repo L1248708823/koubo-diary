@@ -4,9 +4,33 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultLayout } from "../config.js";
 import type { AgentContext } from "../types.js";
-import { createCodexAgentRunner } from "./codex-runner.js";
+import {
+  buildCodexAgentArgs,
+  createCodexAgentRunner,
+} from "./codex-runner.js";
 
 describe("Codex agent runner", () => {
+  it("处理端显式传入模型和最大思考程度", () => {
+    expect(
+      buildCodexAgentArgs({
+        model: "gpt-5.6-luna",
+        reasoningEffort: "max",
+        extraArgs: ["--json"],
+      }),
+    ).toEqual([
+      "exec",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "-s",
+      "workspace-write",
+      "-m",
+      "gpt-5.6-luna",
+      "-c",
+      'model_reasoning_effort="max"',
+      "--json",
+    ]);
+  });
+
   it("Windows .cmd runner 将完整 prompt 通过 stdin 传输", async () => {
     if (process.platform !== "win32") return;
 
@@ -68,6 +92,10 @@ describe("Codex agent runner", () => {
         "--skip-git-repo-check",
         "-s",
         "workspace-write",
+        "-m",
+        "gpt-5.6-luna",
+        "-c",
+        'model_reasoning_effort="max"',
       ]);
       expect(captured.input).toContain('"round_id": "round-codex-test"');
       expect(captured.input).toContain("_inbox/20260803-test.md");

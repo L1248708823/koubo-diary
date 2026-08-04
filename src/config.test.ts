@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   defaultLayout,
+  isDatedIdeaPath,
   isDiaryPath,
   isIdeaPath,
   isResearchPath,
@@ -21,6 +22,12 @@ describe("config whitelist", () => {
     ).toBe(true);
     expect(isWhitelistedPath("Yan帳/想法/灵感.md", layout)).toBe(true);
     expect(isIdeaPath("Yan帳/想法/灵感.md", layout)).toBe(true);
+    expect(
+      isDatedIdeaPath("Yan帳/想法/2026-07-29-灵感.md", layout, "2026-07-29"),
+    ).toBe(true);
+    expect(
+      isDatedIdeaPath("Yan帳/想法/2026-07-07-灵感.md", layout, "2026-07-29"),
+    ).toBe(false);
     expect(isWhitelistedPath("Yan帳/研究/简报.md", layout)).toBe(true);
     expect(isResearchPath("Yan帳/研究/简报.md", layout)).toBe(true);
     expect(isWhitelistedPath("_processor/last-run.json", layout)).toBe(true);

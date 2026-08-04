@@ -232,6 +232,31 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("已知完整路径的 Yan帳/想法/、Yan帳/研究/");
   });
 
+  it("提示词只允许读取编排器列出的顶层关联候选", () => {
+    const prompt = buildProcessorPrompt(
+      {
+        vaultPath: "D:/vault",
+        layout: defaultLayout("D:/vault"),
+        maxPerRound: 1,
+        pendingInbox: ["_inbox/20260804-test.md"],
+        roundId: "round-association-scope-test",
+        associationCandidates: {
+          ideas: ["Yan帳/想法/2026-08-04-已有命题.md"],
+          research: ["Yan帳/研究/已有研究.md"],
+        },
+      },
+      "处理收件箱",
+      "Codex",
+    );
+
+    expect(prompt).toContain("Yan帳/想法/2026-08-04-已有命题.md");
+    expect(prompt).toContain("Yan帳/研究/已有研究.md");
+    expect(prompt).toContain("只能读取上方列出的关联候选文件");
+    expect(prompt).toContain("文件名必须使用收件项 captured_at 的日期");
+    expect(prompt).toContain("我想");
+    expect(prompt).toContain("不能单独触发想法");
+  });
+
   it("检测到模型容量错误时按上限重跑，并在后续成功后结束", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "koubo-cli-retry-"));
     const stateFile = path.join(tempDir, "attempts.txt");

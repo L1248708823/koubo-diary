@@ -268,6 +268,122 @@ describe("processor acceptance", () => {
     }
   });
 
+  it("允许一条 done 收件项声明多个独立想法", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "包含两个独立命题", {
+      capturedAt: "2026-07-30T22:00:00+08:00",
+    });
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    const firstIdea = `${vault.layout.ideasDir}/2026-07-30-第一个命题.md`;
+    const secondIdea = `${vault.layout.ideasDir}/2026-07-30-第二个命题.md`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
+    await mkdir(path.join(vault.root, vault.layout.ideasDir), { recursive: true });
+    await writeFile(path.join(vault.root, firstIdea), "第一个想法\n", "utf8");
+    await writeFile(path.join(vault.root, secondIdea), "第二个想法\n", "utf8");
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [
+        {
+          inbox,
+          status: "done",
+          diary,
+          ideas: [firstIdea, secondIdea],
+        },
+      ],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [
+        { path: diary, status: "A" },
+        { path: firstIdea, status: "A" },
+        { path: secondIdea, status: "A" },
+      ],
+      roundId,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.done[0]?.ideas).toEqual([firstIdea, secondIdea]);
+  });
+
+  it("拒绝新建想法文件使用错误的捕捉日期", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "日期命名校验", {
+      capturedAt: "2026-07-30T22:00:00+08:00",
+    });
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    const idea = `${vault.layout.ideasDir}/2026-07-29-错误日期.md`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
+    await mkdir(path.dirname(path.join(vault.root, idea)), { recursive: true });
+    await writeFile(path.join(vault.root, idea), "想法\n", "utf8");
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox, status: "done", diary, ideas: [idea] }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [
+        { path: diary, status: "A" },
+        { path: idea, status: "A" },
+      ],
+      roundId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("captured_at 日期");
+  });
+
+  it("拒绝内容整理 agent 直接写入研究简报", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "不应由内容整理直接写研究");
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    const brief = `${vault.layout.researchDir}/不应提前写入.md`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
+    await mkdir(path.dirname(path.join(vault.root, brief)), { recursive: true });
+    await writeFile(path.join(vault.root, brief), "# 研究简报\n", "utf8");
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox, status: "done", diary }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [
+        { path: diary, status: "A" },
+        { path: brief, status: "A" },
+      ],
+      roundId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("不得写入研究目录");
+  });
+
   it("允许处理轮次开始后新增的顶层 inbox", async () => {
     const vault = await createTempVault();
     vaults.push(vault);
