@@ -1,6 +1,13 @@
-# 口播日记 · 处理环
+# Yan帳 · 处理环
 
-个人工具：捕捉端投递口播 → 收件箱 → Codex/Claude 轻整理 → 日记为轴写回；本地联调使用临时文件 vault，生产环境再同步真实日记仓。
+个人工具：捕捉端投递原始记录 → 收件箱 → Codex/Claude 轻整理 → 日记为轴写回；本地联调使用临时文件 vault，生产环境使用独立的真实日记仓。
+
+## 仓库绑定
+
+- 工具仓：`https://github.com/L1248708823/koubo-diary.git`
+- 日记仓：`https://github.com/L1248708823/Obsidian`
+
+生产环境的 `VAULT_PATH` 必须指向服务器上日记仓的 clone 根目录。工具仓只提供程序、捕捉端静态资源、skill 和配置模板；`VAULT_REMOTE_URL` 用于启动前校验日记仓的 fetch/push remote，Git 事务锁使用 `GIT_LOCK_PATH`。
 
 ## 当前进度（本地可测）
 
@@ -10,10 +17,10 @@
 | 02 收件 HTTP | 自动化测试全绿 |
 | 03 投递唤醒编排 | 自动化测试全绿 |
 | 04 捕捉端接真投递 | `capture/index.html`（B 手感 + 可配 URL/token） |
-| 05 真 CLI agent 与研究 runner | Codex/Claude 内容 runner、独立 Codex research runner 与本地无 Git 联调线已就绪，真实 CLI 研究样例待人工抽查 |
-| 06 托底 / STATE / 演习 | 文档与 STATE 写入已就绪，**实机演习等 VPS** |
+| 05 真 CLI agent 与研究 runner | Codex/Claude 内容 runner、独立 Codex research runner 与本地无 Git 联调线已就绪；真实来源质量仍需人工抽查 |
+| 06 托底 / STATE / 演习 | 文档与 STATE 写入已就绪，生产 Git、凭证和 VPS 演习待现场确认 |
 
-密钥、GitHub remote、CLI 登录等生产信息仍只放 VPS；本地可先用 `config/local.env.example` 建临时 vault 联调。代码仓与日记仓的 Git 生命周期由 `VAULT_GIT_MODE` 区分。
+密钥、GitHub remote、CLI 登录等生产信息仍只放 VPS；本地可先用 `config/local.env.example` 建临时 vault 联调。代码仓与日记仓的 Git 生命周期由 `VAULT_GIT_MODE` 区分，生产 remote 模式必须配置 `VAULT_REMOTE_URL`。
 
 ## 开发与测试
 
@@ -48,6 +55,8 @@ npm run typecheck
 - `capture/`：B 在场感捕捉端，接真 Ingest
 - `docs/ops/`：本地测 / 运营交接 / 演习
 
+当前 runner 将处理边界内嵌到运行时 prompt，并禁止 agent 通过扫描或读取 `SKILL.md` 获取规则；skill 文件是维护和部署基线，不是线上 agent 的目录搜索入口。
+
 ## 领域词
 
-见根目录 `CONTEXT.md`。硬决策见 `docs/adr/0001`–`0005`。
+见根目录 `CONTEXT.md`。硬决策见 `docs/adr/0001`–`0007`。

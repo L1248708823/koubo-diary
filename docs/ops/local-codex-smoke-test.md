@@ -14,7 +14,7 @@
 
 ```powershell
 Set-Location "D:\前端\需求开发文件夹\口播日记"
-pnpm install
+npm.cmd install
 ```
 
 不要混用 Windows 和 WSL 的 `node_modules`。
@@ -46,25 +46,25 @@ CLAUDE_BIN=claude.cmd
 ## 3. 初始化临时 vault
 
 ```powershell
-pnpm local:setup
+npm.cmd run local:setup
 ```
 
 命令只会创建临时目录、目录结构、处理 skill 和本地前端 runtime config，不会初始化 Git，也不会连接任何远端。
 
 ## 4. 启动两个进程
 
-窗口一：Node 接收服务。它在本地模式下会自动排队调用 processor，不需要再手动启动 `pnpm local:processor`。
+窗口一：Node 接收服务。它在本地模式下会自动排队调用 processor，不需要再手动启动 `npm.cmd run local:processor`。
 
 ```powershell
 Set-Location "D:\前端\需求开发文件夹\口播日记"
-pnpm local:ingest
+npm.cmd run local:ingest
 ```
 
 窗口二：Vue 页面。
 
 ```powershell
 Set-Location "D:\前端\需求开发文件夹\口播日记"
-pnpm local:web
+npm.cmd run local:web
 ```
 
 浏览器打开：
@@ -118,12 +118,12 @@ VAULT_REMOTE_URL=https://github.com/L1248708823/Obsidian
 GIT_LOCK_PATH=/run/koubo-git.lock
 ```
 
-工具仓 `koubo-diary` 只负责部署 Node、前端和 skill；`VAULT_PATH` 才是实际日记 Obsidian 仓库。两者不能混用。
+工具仓 `koubo-diary` 只负责部署 Node、前端、skill 基线和配置模板；`VAULT_PATH` 才是实际日记 Obsidian 仓库。当前 runner 通过运行时 prompt 注入处理规则，不要求 agent 读取 vault 内的 `SKILL.md`。两者不能混用。
 
 生产前端构建：
 
 ```powershell
-pnpm web:build
+npm.cmd run web:build
 ```
 
 生产服务使用真实 `.env` / systemd `EnvironmentFile`，不要使用 `config/local-codex.env`。
@@ -151,7 +151,7 @@ http://127.0.0.1:4173/
 ### 页面显示旧配置
 
 ```powershell
-pnpm local:setup
+npm.cmd run local:setup
 ```
 
 然后浏览器执行 `Ctrl+F5`。
@@ -163,4 +163,4 @@ Get-Command codex
 Get-Command codex.cmd
 ```
 
-把实际命令写入 `CODEX_BIN`。
+把实际命令写入 `CODEX_BIN`。如果机器同时安装了 Volta、npm 全局 CLI 或多个 Codex，建议把 `CODEX_BIN` 写成 `Get-Command codex.cmd` 返回的绝对路径，避免子进程使用到错误的 PATH。

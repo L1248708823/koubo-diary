@@ -3,6 +3,8 @@
 日期：2026-08-03
 仓库：`D:\前端\需求开发文件夹\口播日记`
 
+> 文档状态：历史开发会话交接快照，不是当前实现说明，也不是生产部署或线上 AI 操作手册。当前实现和生产信息以 `README.md`、`docs/ops/`、`config/production.env.example` 与分支最新代码为准；下文的未提交改动、失败测试和下一会话建议均属于 2026-08-03 的历史记录。
+
 本交接用于新会话继续工作。当前目标是保持 Yan帳 现有主流程，收紧领域边界、提示词维护和错误可见性，不进行整体重写。
 
 ## 用户已确认的方向
@@ -46,7 +48,7 @@
 
 推荐优先实现处理环异常显式失败，因为它直接影响收件项所有权、Git 变更检查、STATE 状态和失败恢复。
 
-## 当前未提交工作区
+## 当时未提交工作区（历史快照）
 
 以下源代码改动来自此前研究链路诊断，必须保留，不能使用 destructive git 命令清除：
 
@@ -60,7 +62,7 @@
 
 本会话新增的领域和 tracker 文件属于有效工作，也需要保留。
 
-## 验证状态
+## 当时验证状态（历史快照）
 
 - `npm.cmd run typecheck`：通过。
 - `npm.cmd test -- --run`：14 个测试文件中 12 个通过，85 条测试中 82 条通过，3 条失败。
@@ -68,7 +70,7 @@
 - 失败 2、3：旧测试仍期待研究 `partial` 或 `blocked` 时轮次为 `success`，当前规格要求返回 `failed`。
 - Git 检查仍会提示现有源代码改动存在 LF/CRLF 转换，Windows 下提交前需要处理。
 
-## 下一会话建议
+## 当时下一会话建议（已完成）
 
 1. 读取本文件、对应 ticket、`CONTEXT.md`、ADR-0005、ADR-0006、ADR-0007 和两份 spec。
 2. 从一个 ticket 开始，不要同时修改两个无阻塞 ticket 的重叠文件。
@@ -77,6 +79,6 @@
 5. 不启动真实 processor、真实 Codex 研究服务或真实 vault 写入，除非用户明确要求。
 6. 不自动合并、迁移或删除真实 vault 中的历史想法、嵌套 Yan帳 和旧研究简报。
 
-## 新会话启动语句
+## 历史新会话启动语句（已失效）
 
-请读取 `temp/handoff-yan-account-mainline-2026-08-03.md`，保留当前未提交改动，从 `processor-reliability-contract/issues/01-processor-errors-visible.md` 开始实现。使用 TDD，先检查现有 seam 和失败测试，不要重写主流程，不要启动真实 vault 服务。
+当前继续开发时，应先检查 `git status`、`git log -1`、`npm.cmd test`、`npm.cmd run typecheck`，再根据当前 ticket 或用户最新请求决定是否修改代码。生产部署请改读 `docs/ops/handoff-ops.md` 和 `docs/ops/field-drill.md`。

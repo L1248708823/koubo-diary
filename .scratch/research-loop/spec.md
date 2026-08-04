@@ -1,12 +1,12 @@
 # Spec: 研究任务处理环与写回安全
 
-Status: ready-for-agent
+Status: implemented; ready-for-human-smoke
 Feature slug: `research-loop`
 Sources: `CONTEXT.md`、ADR-0001、ADR-0004、ADR-0005、ADR-0006、现有 `processor-loop` 规格、当前本地联调问题记录和已确认的研究 skill 决策
 
 ## Problem Statement
 
-当前处理环已经可以把口播写入当日日记，并在模型判断为独立想法时创建 `Yan帳/想法`。当口播包含明确的认知缺口时，系统只能写入 `needs_research: true`，研究 runner 尚未接入，因此用户看不到 `Yan帳/研究` 中的研究简报。
+当前处理环已经可以把原始记录写入当日日记，在模型判断为独立想法时创建 `Yan帳/想法`，并由独立 Codex research runner 消费研究任务、写回 `Yan帳/研究`。真实来源质量和生产现场 Git 行为仍需要人工 smoke test，不能由自动化测试代替。
 
 当前本地联调还暴露出三类处理问题：
 
@@ -237,4 +237,4 @@ last_error?
 - 顶级 `Yan帳` 是固定领域决策，任何研究、想法和路径验收实现都必须遵守 ADR-0006。
 - 研究 skill 定位为研究执行与研究简报写回层。内容整理 skill 负责从口播提炼想法轴和待查轴，处理环负责调度与机械验收。
 - 研究简报的准确性、来源质量和反方覆盖需要人工样例迭代；自动化测试负责契约和状态，不能证明模型的知识质量。
-- 实现顺序建议为：先修复处理循环的 round id、收件箱只读、越权路径恢复和队列合并，再接研究 runner 和假来源 seam，最后进行真实 Codex 与研究来源 smoke test。
+- 实现顺序已完成；后续只需按 `docs/ops/local-test-cases.md` 执行本地真实 Codex smoke test，并按 `docs/ops/field-drill.md` 验证生产 Git、凭证和远端冲突边界。

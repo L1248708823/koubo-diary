@@ -14,7 +14,7 @@ _processor/
 Yan帳/
   想法/               # 若尚不存在
   研究/               # 研究任务输出
-.claude/skills/处理收件箱/SKILL.md  # CLI agent 的只读 skill 基线
+.claude/skills/处理收件箱/SKILL.md  # 维护基线；当前 runner 不要求 agent 读取
 ```
 
 日记树一般已存在：
@@ -53,7 +53,7 @@ INBOX_DIR=_inbox
 - 想法或研究简报按年自动归档目录（v1 无）
 - 开放主题 tag 体系
 
-`.claude/skills/处理收件箱/SKILL.md` 是部署基线文件，不由 agent 在处理轮中修改。工具仓中的同名 skill 更新后，先同步到 vault 基线并单独提交，再运行处理环。
+`.claude/skills/处理收件箱/SKILL.md` 是部署基线文件，不由 agent 在处理轮中修改。当前内容和研究 runner 的核心规则由运行时 prompt 显式传入，agent 不应扫描或读取此文件。工具仓中的同名 skill 更新后，先同步到 vault 基线并单独提交，再运行处理环。
 
 ## 与本机路径
 

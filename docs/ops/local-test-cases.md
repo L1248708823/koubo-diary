@@ -32,7 +32,7 @@ npm.cmd run local:setup
 
 ```powershell
 Get-Content -LiteralPath '.\config\local-codex.env' -Encoding UTF8 |
-  Where-Object { $_ -match '^(VAULT_PATH|VAULT_GIT_MODE|LOCK_PATH|AGENT_PROVIDER|CODEX_BIN)=' }
+  Where-Object { $_ -match '^(VAULT_PATH|VAULT_GIT_MODE|GIT_REMOTE|VAULT_REMOTE_URL|LOCK_PATH|GIT_LOCK_PATH|AGENT_PROVIDER|CODEX_BIN)=' }
 ```
 
 预期至少包含：
@@ -42,6 +42,8 @@ VAULT_PATH=.../.temp-vaults/codex-e2e-local/vault
 VAULT_GIT_MODE=local
 AGENT_PROVIDER=codex
 CODEX_BIN=codex.cmd
+
+本地模式可以不填写 `VAULT_REMOTE_URL` 和 `GIT_LOCK_PATH`，因为不会执行远端 Git。生产 remote 模式必须同时检查 `GIT_REMOTE=origin`、`VAULT_REMOTE_URL=https://github.com/L1248708823/Obsidian` 和 `GIT_LOCK_PATH`，具体以 `config/production.env.example` 为准。
 ```
 
 ### 2. 自动检查

@@ -1,18 +1,29 @@
 # 处理环运维与演习清单
 
 密钥、VPS 登录、真 GitHub remote、选定 CLI 的登录/凭证到位后再跑本清单。本地 `npm test` 已覆盖假 agent 契约，不依赖这些秘密。
+工具仓：`https://github.com/L1248708823/koubo-diary.git`；日记仓：`https://github.com/L1248708823/Obsidian`。生产 `VAULT_PATH` 必须指向日记仓 clone 根目录。
 
 ## 部署前
 
-1. VPS 上 clone 本仓库与 vault remote
-2. 复制 `.env.example` → `.env`（或 systemd `EnvironmentFile`），填：
+1. VPS 上 clone 工具仓与日记仓
+2. 以 `config/production.env.example` 为模板，写入受限的 EnvironmentFile，填：
    - `INGEST_TOKEN`（长随机串）
-   - `VAULT_PATH`
+   - `VAULT_PATH`（日记仓 clone 根目录）
+   - `VAULT_GIT_MODE=remote`
+   - `GIT_REMOTE=origin`
+   - `VAULT_REMOTE_URL=https://github.com/L1248708823/Obsidian`
    - `AGENT_PROVIDER=codex` 或 `AGENT_PROVIDER=claude`
    - 对应 CLI：`CODEX_BIN` / `CLAUDE_BIN`，以及该 CLI 的本机登录或凭证
-   - `LOCK_PATH`、`WAKE_FLAG_PATH`（宿主机路径，**不进 git**）
+   - `LOCK_PATH`、`GIT_LOCK_PATH`、`WAKE_FLAG_PATH`（宿主机路径，**不进 git**）
 3. 确认日记、想法和研究目录名与真实 vault 一致（`DIARY_DIR` / `IDEAS_DIR` / `RESEARCH_DIR`）
 4. 捕捉端（`capture/index.html`）设置里填 Ingest URL 与同一 token（只存在设备 localStorage）
+5. 启动处理环前确认仓库身份和根目录：
+```bash
+git -C /var/lib/koubo/vault rev-parse --show-toplevel
+git -C /var/lib/koubo/vault remote get-url origin
+git -C /var/lib/koubo/vault remote get-url --push origin
+```
+预期根目录是 `/var/lib/koubo/vault`，fetch 和 push remote 均归一化为 `github.com/l1248708823/obsidian`。
 
 ## 进程
 
@@ -23,7 +34,7 @@
 ### 示例 cron
 
 ```cron
-*/15 * * * * cd /opt/koubo-diary && . ./.env && npm run processor >> /var/log/koubo-processor.log 2>&1
+*/15 * * * * set -a; . /etc/koubo/koubo.env; set +a; cd /opt/koubo-diary && npm run processor >> /var/log/koubo-processor.log 2>&1
 ```
 
 ### 示例唤醒

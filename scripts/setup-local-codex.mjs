@@ -58,4 +58,4 @@ if (vaultExists) {
 } else {
   console.log(`本地测试 vault 已创建：${vaultPath}`);
 }
-console.log("本地模式不初始化 Git；下一步：启动 pnpm local:ingest 和 pnpm local:web，再打开捕捉页面。");
+console.log("本地模式不初始化 Git；下一步：启动 npm.cmd run local:ingest 和 npm.cmd run local:web，再打开捕捉页面。");
