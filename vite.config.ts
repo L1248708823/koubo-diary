@@ -27,7 +27,6 @@ export default defineConfig(({ command }) => ({
     rollupOptions: {
       input: {
         capture: path.resolve(process.cwd(), "capture/index.html"),
-        flow: path.resolve(process.cwd(), "capture/flow.html"),
       },
     },
   },

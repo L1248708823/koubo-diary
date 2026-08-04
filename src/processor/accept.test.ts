@@ -268,6 +268,44 @@ describe("processor acceptance", () => {
     }
   });
 
+  it("允许处理轮次开始后新增的顶层 inbox", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const snapshotInbox = await seedInbox(vault.layout, "本轮条目", {
+      id: "20260730-220000-round01",
+    });
+    const arrivingInbox = await seedInbox(vault.layout, "处理期间新投递", {
+      id: "20260730-220001-arrive1",
+    });
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox: snapshotInbox, status: "done", diary }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [snapshotInbox],
+      changes: [
+        { path: diary, status: "A" },
+        { path: arrivingInbox, status: "A" },
+      ],
+      roundId,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.done.map((item) => item.inbox)).toEqual([snapshotInbox]);
+    }
+  });
+
   it("拒绝缺少 round_id 的旧回执", async () => {
     const vault = await createTempVault();
     vaults.push(vault);

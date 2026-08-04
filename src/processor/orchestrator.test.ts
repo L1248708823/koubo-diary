@@ -506,6 +506,10 @@ describe("processor orchestrator (seam 1)", () => {
     expect(result.researchProcessed).toBe(1);
     expect(researchCalls).toBe(1);
     expect(tasks[0]?.status).toBe("partial");
+    const diaryBody = await readFile(path.join(vault.root, diaryRel), "utf8");
+    expect(diaryBody).toContain("needs_research: true");
+    expect(diaryBody).toContain("research_status: partial");
+    expect(diaryBody).toContain("research_error: \"证据仍然不足\"");
     expect(await pathExists(path.join(vault.root, diaryRel))).toBe(true);
     expect(await pathExists(path.join(vault.root, inboxRel))).toBe(false);
   });
@@ -555,9 +559,18 @@ describe("processor orchestrator (seam 1)", () => {
       path.join(vault.root, vault.layout.processorDir, "STATE.md"),
       "utf8",
     );
+    const diaryBody = await readFile(path.join(vault.root, diaryRel), "utf8");
+    const tasks = await readResearchTasks(vault.layout);
     expect(result.status).toBe("failed");
     expect(result.researchPending).toBe(1);
     expect(result.reason).toContain("来源暂不可用");
+    expect(tasks[0]).toMatchObject({
+      status: "blocked",
+      last_error: "来源暂不可用",
+    });
+    expect(diaryBody).toContain("needs_research: true");
+    expect(diaryBody).toContain("research_status: blocked");
+    expect(diaryBody).toContain("research_error: \"来源暂不可用\"");
     expect(state).toContain("- status: failed");
     expect(state).toContain("- research_pending: 1");
     expect(state).toContain("来源暂不可用");
@@ -730,6 +743,46 @@ describe("processor orchestrator (seam 1)", () => {
     expect(restored).toContain("失败项");
     expect(restored).toContain("attempts: 1");
     expect(await pathExists(path.join(vault.root, doneInbox))).toBe(false);
+  });
+
+  it("处理期间新投递的 inbox 不会被验收恢复删除", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const firstInbox = await seedInbox(vault.layout, "第一条内容", {
+      id: "20260729-120000-first01",
+    });
+    await captureHead();
+    const secondInbox = `${vault.layout.inboxDir}/20260729-120001-second1.md`;
+    const diaryRel = await writeDiary(
+      vault.layout,
+      "2026/2026-07/2026-07-29.md",
+      "第一条内容\n",
+    );
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await seedInbox(layout, "第二条内容", {
+        id: "20260729-120001-second1",
+      });
+      return {
+        ok: true,
+        round_ended_at: clock.now().toISOString(),
+        processed: [
+          { inbox: pendingInbox[0]!, status: "done", diary: diaryRel },
+        ],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.deletedInbox).toEqual([firstInbox]);
+    expect(await pathExists(path.join(vault.root, secondInbox))).toBe(true);
   });
 
   it("研究任务按独立上限分批，收件箱为空时可继续研究阶段", async () => {

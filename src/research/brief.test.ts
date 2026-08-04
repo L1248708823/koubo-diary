@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { runResearchStage } from "./stage.js";
 import {
   createResearchBriefRunner,
+  findResearchBriefForTask,
+  validateResearchWriteback,
   type ResearchEvidenceBundle,
   type ResearchSourceAdapter,
 } from "./brief.js";
@@ -90,6 +92,7 @@ describe("research brief write-back", () => {
       expect(sourceBody).toContain("needs_research: false");
       expect(sourceBody).toContain("research_status: complete");
       expect(sourceBody).toContain(briefLink);
+      expect(sourceBody).not.toContain("research_error:");
     }
 
     const researchEntries = await readdir(
@@ -211,14 +214,264 @@ describe("research brief write-back", () => {
     expect(result.processed).toBe(1);
     expect(savedTask.status).toBe("partial");
     expect(savedTask.last_error).toContain("证据");
-    expect(await readFile(path.join(vault.root, diary), "utf8")).toContain(
-      "needs_research: true",
-    );
+    const sourceBody = await readFile(path.join(vault.root, diary), "utf8");
+    expect(sourceBody).toContain("needs_research: true");
+    expect(sourceBody).toContain("research_status: partial");
+    expect(sourceBody).toContain("research_error:");
     expect(
       (await readdir(path.join(vault.root, vault.layout.researchDir))).filter(
         (entry) => entry.endsWith(".md"),
       ),
     ).toHaveLength(0);
+  });
+
+  it("runner 返回 blocked 时同步保留来源状态和失败原因", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary);
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "task-blocked-source-state",
+        sourceDiary: diary,
+        question: "来源不可用时应保留什么状态？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+
+    const result = await runResearchStage({
+      layout: vault.layout,
+      maxResearchPerRound: 5,
+      runner: {
+        async run() {
+          return { status: "blocked" as const, lastError: "来源超时" };
+        },
+      },
+      clock,
+    });
+
+    const savedTask = (await readResearchTasks(vault.layout))[0]!;
+    const sourceBody = await readFile(path.join(vault.root, diary), "utf8");
+    expect(result).toMatchObject({
+      processed: 1,
+      pending: 1,
+      progressed: true,
+    });
+    expect(result.error).toContain("来源超时");
+    expect(savedTask).toMatchObject({
+      status: "blocked",
+      last_error: "来源超时",
+    });
+    expect(sourceBody).toContain("三大项视频分析需要先验证技术边界。");
+    expect(sourceBody).toContain("needs_research: true");
+    expect(sourceBody).toContain("research_status: blocked");
+    expect(sourceBody).toContain("research_error: \"来源超时\"");
+  });
+
+  it("刷新失败时保留上一份已完成简报", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary);
+    const task = createResearchTask({
+      taskId: "task-preserve-complete-brief",
+      sourceDiary: diary,
+      question: "刷新失败时旧简报是否保留？",
+      now: clock.now().toISOString(),
+    });
+    await writeResearchTasks(vault.layout, [task]);
+    await runResearchStage({
+      layout: vault.layout,
+      maxResearchPerRound: 5,
+      runner: createResearchBriefRunner({
+        async collect() {
+          return videoAnalysisEvidence({ question: task.question });
+        },
+      }),
+      clock,
+    });
+    const completeTask = (await readResearchTasks(vault.layout))[0]!;
+    const brief = completeTask.brief!;
+    const originalBrief = await readFile(path.join(vault.root, brief), "utf8");
+    await writeSourceNote(vault, diary);
+    await writeResearchTasks(vault.layout, [
+      {
+        ...completeTask,
+        status: "pending",
+        updated_at: "2026-08-01T13:00:00.000Z",
+      },
+    ]);
+
+    const result = await runResearchStage({
+      layout: vault.layout,
+      maxResearchPerRound: 5,
+      runner: {
+        async run() {
+          return {
+            status: "blocked" as const,
+            brief,
+            lastError: "刷新来源不可用",
+          };
+        },
+      },
+      clock,
+    });
+
+    expect(result.error).toContain("刷新来源不可用");
+    expect(await readFile(path.join(vault.root, brief), "utf8")).toBe(
+      originalBrief,
+    );
+  });
+
+  it("来源笔记写回失败时不静默吞掉 I/O 错误", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await mkdir(path.join(vault.root, diary), { recursive: true });
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "task-source-write-failure",
+        sourceDiary: diary,
+        question: "来源笔记不可写时应如何报告？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+
+    await expect(
+      runResearchStage({
+        layout: vault.layout,
+        maxResearchPerRound: 5,
+        runner: {
+          async run() {
+            return { status: "blocked" as const, lastError: "来源不可用" };
+          },
+        },
+        clock,
+      }),
+    ).rejects.toThrow("研究来源状态写回失败");
+    expect((await readResearchTasks(vault.layout))[0]).toMatchObject({
+      status: "blocked",
+      last_error: "来源不可用",
+    });
+  });
+
+  it("来源文件明确缺失时任务进入 blocked，不伪装成写回异常", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "task-missing-source",
+        sourceDiary: diary,
+        question: "来源文件缺失时应如何报告？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+
+    await expect(
+      runResearchStage({
+        layout: vault.layout,
+        maxResearchPerRound: 5,
+        runner: {
+          async run() {
+            throw new Error("不应调用研究 runner");
+          },
+        },
+        clock,
+      }),
+    ).rejects.toThrow("研究来源状态写回失败");
+    expect((await readResearchTasks(vault.layout))[0]).toMatchObject({
+      status: "blocked",
+      last_error: expect.stringContaining("source_diary 不存在"),
+    });
+  });
+
+  it("研究简报读取的非 ENOENT 错误必须向上抛出", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    const brief = `${vault.layout.researchDir}/读取失败.md`;
+    await writeSourceNote(vault, diary, false);
+    await mkdir(path.join(vault.root, brief), { recursive: true });
+    const task = createResearchTask({
+      taskId: "task-brief-read-failure",
+      sourceDiary: diary,
+      question: "研究简报读取失败时应如何报告？",
+      now: clock.now().toISOString(),
+    });
+
+    await expect(
+      validateResearchWriteback({
+        layout: vault.layout,
+        task,
+        briefPath: brief,
+      }),
+    ).rejects.toThrow("研究简报读取失败");
+  });
+
+  it("研究来源读取的非 ENOENT 错误必须向上抛出", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary, true);
+    const task = createResearchTask({
+      taskId: "task-source-read-failure",
+      sourceDiary: diary,
+      question: "研究来源读取失败时应如何报告？",
+      now: clock.now().toISOString(),
+    });
+    await writeResearchTasks(vault.layout, [task]);
+    const result = await runResearchStage({
+      layout: vault.layout,
+      maxResearchPerRound: 5,
+      runner: createResearchBriefRunner({
+        async collect({ task: runningTask }) {
+          return videoAnalysisEvidence({ question: runningTask.question });
+        },
+      }),
+      clock,
+    });
+    const brief = (await readResearchTasks(vault.layout))[0]?.brief;
+    expect(result.pending).toBe(0);
+    expect(brief).toBeDefined();
+
+    await rm(path.join(vault.root, diary), { force: true });
+    await mkdir(path.join(vault.root, diary), { recursive: true });
+
+    await expect(
+      validateResearchWriteback({
+        layout: vault.layout,
+        task: { ...(await readResearchTasks(vault.layout))[0]!, status: "complete" },
+        briefPath: brief!,
+      }),
+    ).rejects.toThrow("研究来源读取失败");
+  });
+
+  it("研究目录读取的非 ENOENT 错误必须向上抛出", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary);
+    const researchDir = path.join(vault.root, vault.layout.researchDir);
+    await rm(researchDir, { recursive: true, force: true });
+    await writeFile(researchDir, "研究目录被错误替换", "utf8");
+    const task = createResearchTask({
+      taskId: "task-research-dir-read-failure",
+      sourceDiary: diary,
+      question: "研究目录读取失败时应如何报告？",
+      now: clock.now().toISOString(),
+    });
+
+    await expect(findResearchBriefForTask(vault.layout, task)).rejects.toThrow(
+      "研究目录读取失败",
+    );
   });
 
   it("已有 brief 属于其他任务时不覆盖原文件", async () => {
@@ -305,7 +558,24 @@ describe("research brief write-back", () => {
           await mkdir(path.join(layout.vaultPath, layout.researchDir), {
             recursive: true,
           });
-          await writeFile(path.join(layout.vaultPath, brief), "# 不完整\n", "utf8");
+          await writeFile(
+            path.join(layout.vaultPath, brief),
+            [
+              "---",
+              "type: research-brief",
+              "task_id: task-invalid-complete",
+              "research_status: complete",
+              "created: 2026-08-01",
+              "updated: 2026-08-01",
+              "question: \"如何验收研究写回？\"",
+              `source_diary: \"[[${diary.replace(/\.md$/, "")}]]\"`,
+              "---",
+              "",
+              "# 不完整",
+              "",
+            ].join("\n"),
+            "utf8",
+          );
           return { status: "complete" as const, brief };
         },
       },
@@ -315,9 +585,12 @@ describe("research brief write-back", () => {
     const savedTask = (await readResearchTasks(vault.layout))[0]!;
     expect(result.processed).toBe(1);
     expect(savedTask.status).toBe("partial");
-    expect(savedTask.last_error).toContain("research-brief");
+    expect(savedTask.last_error).toContain("研究简报缺少章节");
     expect(await readFile(path.join(vault.root, diary), "utf8")).toContain(
       "needs_research: true",
+    );
+    expect(await readFile(path.join(vault.root, brief), "utf8")).toContain(
+      "research_status: partial",
     );
   });
 });

@@ -29,7 +29,7 @@ Run a research loop: `problem framing` → `evidence gathering` → `evidence le
 - `complete`：问题、证据、来源、反方、未知点和 write-back validation 全部通过。
 - `refresh` 是 action，不是 state；同一来源和问题更新原 brief。
 
-`needs_research` 只作候选信号。`complete` 时统一写 `research_status: complete` 和 `needs_research: false`；`partial`、`blocked` 时保留 `needs_research: true`，记录缺口、错误和下一步。保留原始口播、来源想法和旧简报。
+`needs_research` 只作候选信号。`complete` 时统一写 `research_status: complete` 和 `needs_research: false`，并清除来源笔记中的 `research_error`；`partial`、`blocked` 时保留 `needs_research: true`，在来源笔记写入 `research_error`，记录缺口、错误和下一步。保留原始口播、来源想法和旧简报。
 
 ## Evidence policy
 

@@ -45,11 +45,18 @@ async function findRecoveryPaths(
   changes: ChangedPath[],
 ): Promise<string[]> {
   const paths: string[] = [];
+  const snapshotSet = new Set(snapshotInbox.map(normalize));
   for (const change of changes) {
     for (const changedPath of changedPathNames(change)) {
       if (
         !isWhitelistedPath(changedPath, layout) ||
-        isAgentOwnedInboxPath(changedPath, layout)
+        (isAgentOwnedInboxPath(changedPath, layout) &&
+          !(await isConcurrentInboxAddition(
+            change,
+            changedPath,
+            layout,
+            snapshotSet,
+          )))
       ) {
         paths.push(changedPath);
       }
@@ -63,6 +70,37 @@ async function findRecoveryPaths(
   }
 
   return unique(paths.map(normalize));
+}
+
+async function isConcurrentInboxAddition(
+  change: ChangedPath,
+  changedPath: string,
+  layout: VaultLayout,
+  snapshotInbox: Set<string>,
+): Promise<boolean> {
+  if (
+    change.previousPath !== undefined ||
+    (!change.status.startsWith("A") && !change.status.includes("?"))
+  ) {
+    return false;
+  }
+  const normalized = normalize(changedPath);
+  const inboxPrefix = normalize(layout.inboxDir).replace(/\/+$/, "") + "/";
+  if (!normalized.startsWith(inboxPrefix) || snapshotInbox.has(normalized)) {
+    return false;
+  }
+  const relative = normalized.slice(inboxPrefix.length);
+  if (relative.includes("/") || !relative.endsWith(".md")) return false;
+
+  // 捕捉端写入的 id 必须等于文件名主体，用它排除 agent 重命名旧收件项。
+  let body: string;
+  try {
+    body = await readFile(path.join(layout.vaultPath, normalized), "utf8");
+  } catch {
+    return false;
+  }
+  const id = body.match(/^id:[ \t]*(\S+)[ \t]*$/m)?.[1];
+  return id === relative.slice(0, -3);
 }
 
 function unsafeChangeFailure(

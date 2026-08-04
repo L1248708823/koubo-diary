@@ -73,6 +73,20 @@ type BriefTarget = {
   previousBody?: string;
 };
 
+export class ResearchWritebackError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "ResearchWritebackError";
+  }
+}
+
+export class ResearchReadError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "ResearchReadError";
+  }
+}
+
 const REQUIRED_HEADINGS = [
   "## Research question",
   "## Executive summary",
@@ -99,20 +113,22 @@ export function createResearchBriefRunner(
       try {
         bundle = await adapter.collect(ctx);
       } catch (error) {
-        await markResearchPending(ctx, "blocked");
+        const reason = `研究来源不可用: ${errorMessage(error)}`;
+        await markResearchPending(ctx, "blocked", undefined, reason);
         return {
           status: "blocked",
-          lastError: `研究来源不可用: ${errorMessage(error)}`,
+          lastError: reason,
         };
       }
 
       const evidenceError = validateEvidenceBundle(ctx.task, bundle);
       if (evidenceError) {
-        await markResearchPending(ctx, "partial");
+        await markResearchPending(ctx, "partial", undefined, evidenceError);
         return { status: "partial", lastError: evidenceError };
       }
 
       let target: BriefTarget | undefined;
+      let briefWritten = false;
       try {
         target = await resolveBriefTarget(ctx, bundle);
         const body = renderResearchBrief(ctx, bundle, target);
@@ -124,6 +140,7 @@ export function createResearchBriefRunner(
           body,
           "utf8",
         );
+        briefWritten = true;
 
         for (const sourcePath of sourcePaths(ctx.task)) {
           await updateSourceNote(
@@ -141,7 +158,17 @@ export function createResearchBriefRunner(
           briefPath: target.relativePath,
         });
         if (writebackError) {
-          await markResearchPending(ctx, "partial", target.relativePath);
+          await markResearchBriefIncomplete({
+            layout: ctx.layout,
+            briefPath: target.relativePath,
+            status: "partial",
+          });
+          await markResearchPending(
+            ctx,
+            "partial",
+            target.relativePath,
+            writebackError,
+          );
           return {
             status: "partial",
             brief: target.relativePath,
@@ -150,15 +177,21 @@ export function createResearchBriefRunner(
         }
         return { status: "complete", brief: target.relativePath };
       } catch (error) {
+        if (error instanceof ResearchReadError) throw error;
         const fallbackBrief =
-          target?.relativePath ??
-          (ctx.task.brief && isResearchPath(ctx.task.brief, ctx.layout)
-            ? ctx.task.brief
-            : undefined);
-        await markResearchPending(ctx, "blocked", fallbackBrief);
+          briefWritten && target ? target.relativePath : undefined;
+        const reason = `研究简报写回失败: ${errorMessage(error)}`;
+        if (briefWritten && target) {
+          await markResearchBriefIncomplete({
+            layout: ctx.layout,
+            briefPath: target.relativePath,
+            status: "blocked",
+          });
+        }
+        await markResearchPending(ctx, "blocked", fallbackBrief, reason);
         return {
           status: "blocked",
-          lastError: `研究简报写回失败: ${errorMessage(error)}`,
+          lastError: reason,
         };
       }
     },
@@ -180,13 +213,20 @@ export async function validateResearchWriteback(args: {
   if (task.source_idea && !isIdeaPath(task.source_idea, layout)) {
     return `研究来源想法路径不合法: ${task.source_idea}`;
   }
+  if (sourcePaths(task).length === 0) {
+    return "研究任务缺少来源日记或来源想法";
+  }
 
   const briefAbsolutePath = path.join(layout.vaultPath, briefPath);
   let body: string;
   try {
     body = await readFile(briefAbsolutePath, "utf8");
-  } catch {
-    return `研究简报不存在: ${briefPath}`;
+  } catch (error) {
+    if (isMissingFile(error)) return `研究简报不存在: ${briefPath}`;
+    throw new ResearchReadError(
+      `研究简报读取失败: ${briefPath}: ${errorMessage(error)}`,
+      error,
+    );
   }
 
   const metadata = parseFrontmatter(body);
@@ -199,7 +239,7 @@ export async function validateResearchWriteback(args: {
   if (metadata.research_status !== "complete") {
     return `研究简报状态未完成: ${briefPath}`;
   }
-  if (!metadata.created || !metadata.updated) {
+  if (!isDateOnly(metadata.created) || !isDateOnly(metadata.updated)) {
     return `研究简报缺少研究日期: ${briefPath}`;
   }
   if (metadata.question !== task.question.trim()) {
@@ -218,7 +258,12 @@ export async function validateResearchWriteback(args: {
     return `研究简报缺少 source_idea 回链: ${briefPath}`;
   }
   for (const heading of REQUIRED_HEADINGS) {
-    if (!body.includes(heading)) return `研究简报缺少章节: ${heading}`;
+    const section = extractSection(body, heading);
+    if (!section) {
+      return `研究简报缺少章节: ${heading}`;
+    }
+    const sectionError = validateBriefSection(heading, section, task);
+    if (sectionError) return sectionError;
   }
 
   const briefLink = toWikilink(briefPath);
@@ -227,8 +272,12 @@ export async function validateResearchWriteback(args: {
     let sourceBody: string;
     try {
       sourceBody = await readFile(sourceAbsolutePath, "utf8");
-    } catch {
-      return `研究来源不存在: ${sourcePath}`;
+    } catch (error) {
+      if (isMissingFile(error)) return `研究来源不存在: ${sourcePath}`;
+      throw new ResearchReadError(
+        `研究来源读取失败: ${sourcePath}: ${errorMessage(error)}`,
+        error,
+      );
     }
     if (!sourceBody.includes(briefLink)) {
       return `研究来源缺少简报回链: ${sourcePath}`;
@@ -240,8 +289,74 @@ export async function validateResearchWriteback(args: {
     if (sourceMetadata.research_status !== "complete") {
       return `研究来源 research_status 未完成: ${sourcePath}`;
     }
+    if (sourceMetadata.research_error !== undefined) {
+      return `研究来源仍保留失败原因: ${sourcePath}`;
+    }
   }
   return undefined;
+}
+
+function validateBriefSection(
+  heading: string,
+  section: string,
+  task: ResearchTask,
+): string | undefined {
+  if (heading === "## Evidence and facts") {
+    if (!/(证据|evidence)/i.test(section) || !/(来源|source)/i.test(section)) {
+      return "研究简报证据章节缺少证据锚点";
+    }
+  }
+  if (heading === "## Perspectives and red-team review") {
+    if (!/(反方|red[- ]?team|counter)/i.test(section)) {
+      return "研究简报多视角章节缺少反方审查";
+    }
+  }
+  if (heading === "## Sources") {
+    if (!/(类型|kind|source)/i.test(section)) {
+      return "研究简报来源章节缺少来源资料";
+    }
+    if (!/(https?:\/\/\S+|无法核验|未知|unknown)/i.test(section)) {
+      return "研究简报来源章节缺少 URL 或不可核验说明";
+    }
+  }
+  if (heading === "## Scope and method" && !/(停止|stop)/i.test(section)) {
+    return "研究简报范围与方法章节缺少停止依据";
+  }
+  if (heading === "## Related notes") {
+    for (const sourcePath of sourcePaths(task)) {
+      if (!section.includes(toWikilink(sourcePath))) {
+        return `研究简报关联笔记缺少来源回链: ${sourcePath}`;
+      }
+    }
+  }
+  return undefined;
+}
+
+export async function markResearchBriefIncomplete(args: {
+  layout: VaultLayout;
+  briefPath: string;
+  status: "partial" | "blocked";
+}): Promise<void> {
+  const { layout, briefPath, status } = args;
+  if (!isResearchPath(briefPath, layout)) {
+    throw new Error(`研究简报路径不合法: ${briefPath}`);
+  }
+  const absolutePath = path.join(layout.vaultPath, briefPath);
+  let body: string;
+  try {
+    body = await readFile(absolutePath, "utf8");
+  } catch (error) {
+    if (isMissingFile(error)) return;
+    throw new ResearchWritebackError(
+      `研究简报状态写回失败: ${briefPath}: ${errorMessage(error)}`,
+      error,
+    );
+  }
+  await writeFile(
+    absolutePath,
+    updateFrontmatter(body, { research_status: status }),
+    "utf8",
+  );
 }
 
 function validateEvidenceBundle(
@@ -337,9 +452,9 @@ async function resolveBriefTarget(
       throw new Error(`任务中的 brief 路径不合法: ${ctx.task.brief}`);
     }
     if (await pathExists(path.join(ctx.vaultPath, ctx.task.brief))) {
-      const previousBody = await readFile(
+      const previousBody = await readResearchFile(
         path.join(ctx.vaultPath, ctx.task.brief),
-        "utf8",
+        ctx.task.brief,
       );
       if (!briefMatchesTask(previousBody, ctx.task)) {
         throw new Error(`任务中的 brief 已指向其他研究: ${ctx.task.brief}`);
@@ -360,9 +475,9 @@ async function resolveBriefTarget(
     if (!(await pathExists(path.join(ctx.vaultPath, relativePath)))) {
       return { relativePath };
     }
-    const previousBody = await readFile(
+    const previousBody = await readResearchFile(
       path.join(ctx.vaultPath, relativePath),
-      "utf8",
+      relativePath,
     );
     if (briefMatchesTask(previousBody, ctx.task)) {
       return { relativePath, previousBody };
@@ -376,7 +491,10 @@ async function findExistingBrief(
 ): Promise<BriefTarget | undefined> {
   const relativePath = await findResearchBriefForTask(ctx.layout, ctx.task);
   if (!relativePath) return undefined;
-  const body = await readFile(path.join(ctx.vaultPath, relativePath), "utf8");
+  const body = await readResearchFile(
+    path.join(ctx.vaultPath, relativePath),
+    relativePath,
+  );
   return { relativePath, previousBody: body };
 }
 
@@ -389,7 +507,10 @@ export async function findResearchBriefForTask(
     isResearchPath(task.brief, layout) &&
     (await pathExists(path.join(layout.vaultPath, task.brief)))
   ) {
-    const body = await readFile(path.join(layout.vaultPath, task.brief), "utf8");
+    const body = await readResearchFile(
+      path.join(layout.vaultPath, task.brief),
+      task.brief,
+    );
     if (briefMatchesTask(body, task)) return normalizePath(task.brief);
   }
 
@@ -397,13 +518,26 @@ export async function findResearchBriefForTask(
   let entries;
   try {
     entries = await readdir(researchDir, { withFileTypes: true });
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (isMissingFile(error)) return undefined;
+    throw new ResearchReadError(
+      `研究目录读取失败: ${researchDir}: ${errorMessage(error)}`,
+      error,
+    );
   }
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
     const relativePath = `${layout.researchDir}/${entry.name}`;
-    const body = await readFile(path.join(layout.vaultPath, relativePath), "utf8");
+    let body: string;
+    try {
+      body = await readResearchFile(
+        path.join(layout.vaultPath, relativePath),
+        relativePath,
+      );
+    } catch (error) {
+      if (isMissingFile(error)) continue;
+      throw error;
+    }
     if (briefMatchesTask(body, task)) return relativePath;
   }
   return undefined;
@@ -555,14 +689,26 @@ async function updateSourceNote(
   briefPath: string | undefined,
   status: "complete" | "partial" | "blocked",
   needsResearch: boolean,
+  researchError?: string,
 ): Promise<void> {
   const absolutePath = path.join(ctx.vaultPath, sourcePath);
   const original = await readFile(absolutePath, "utf8");
   const eol = original.includes("\r\n") ? "\r\n" : "\n";
-  const withMetadata = updateFrontmatter(original, {
+  const fields: Record<string, string> = {
     needs_research: String(needsResearch),
     research_status: status,
-  });
+  };
+  if (status === "complete") {
+    fields.research_error = "";
+  } else {
+    fields.research_error = JSON.stringify(
+      oneLine(researchError ?? `研究任务状态为 ${status}`),
+    );
+  }
+  let withMetadata = updateFrontmatter(original, fields);
+  if (status === "complete") {
+    withMetadata = removeFrontmatterField(withMetadata, "research_error");
+  }
   const briefLink = briefPath ? toWikilink(briefPath) : undefined;
   if (!briefLink) {
     await writeFile(absolutePath, withMetadata, "utf8");
@@ -587,13 +733,27 @@ export async function markResearchPending(
   ctx: ResearchRunnerContext,
   status: "partial" | "blocked",
   briefPath?: string,
+  lastError?: string,
 ): Promise<void> {
+  const failures: string[] = [];
   for (const sourcePath of sourcePaths(ctx.task)) {
     try {
-      await updateSourceNote(ctx, sourcePath, briefPath, status, true);
-    } catch {
-      // 研究失败不能覆盖原始来源；状态写回尽力完成。
+      await updateSourceNote(
+        ctx,
+        sourcePath,
+        briefPath,
+        status,
+        true,
+        lastError,
+      );
+    } catch (error) {
+      failures.push(`${sourcePath}: ${errorMessage(error)}`);
     }
+  }
+  if (failures.length > 0) {
+    throw new ResearchWritebackError(
+      `研究来源状态写回失败: ${failures.join("; ")}`,
+    );
   }
 }
 
@@ -625,6 +785,17 @@ function updateFrontmatter(
   return nextHeader + body.slice(match[0].length);
 }
 
+function removeFrontmatterField(body: string, key: string): string {
+  const match = body.match(/^---\r?\n([\s\S]*?)\r?\n---(?=\r?\n|$)/);
+  if (!match) return body;
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const lines = (match[1] ?? "")
+    .split(/\r?\n/)
+    .filter((line) => !line.match(new RegExp(`^${escapeRegExp(key)}:`)));
+  const nextHeader = ["---", ...lines, "---"].join(eol);
+  return nextHeader + body.slice(match[0].length);
+}
+
 function sourcePaths(task: ResearchTask): string[] {
   return [...new Set([task.source_diary, task.source_idea].filter(Boolean))] as string[];
 }
@@ -639,6 +810,21 @@ function toWikilink(relativePath: string): string {
 
 function sourceWikilink(relativePath: string | undefined): string | undefined {
   return relativePath ? `[[${sourceLinkPath(relativePath)}]]` : undefined;
+}
+
+async function readResearchFile(
+  absolutePath: string,
+  relativePath: string,
+): Promise<string> {
+  try {
+    return await readFile(absolutePath, "utf8");
+  } catch (error) {
+    if (isMissingFile(error)) throw error;
+    throw new ResearchReadError(
+      `研究简报读取失败: ${relativePath}: ${errorMessage(error)}`,
+      error,
+    );
+  }
 }
 
 function normalizePath(relativePath: string): string {
@@ -686,6 +872,10 @@ function dateOnly(value: string): string {
   return value.slice(0, 10);
 }
 
+function isDateOnly(value: string | undefined): value is string {
+  return value !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -701,11 +891,22 @@ function bulletLines(values: string[]): string[] {
 function extractSection(body: string, heading: string): string | undefined {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = body.match(
-    new RegExp(`^${escaped}\\r?\\n\\r?\\n([\\s\\S]*?)(?=\\r?\\n## |$)`, "m"),
+    new RegExp(
+      `^${escaped}\\r?\\n(?:\\r?\\n)?([\\s\\S]*?)(?=^## |(?![\\s\\S]))`,
+      "m",
+    ),
   );
   return match?.[1]?.trim();
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

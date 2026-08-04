@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  countPendingResearchTasks,
+  countRunnableResearchTasks,
+  countUnfinishedResearchTasks,
   createResearchTask,
   readResearchTasks,
   recoverRunningResearchTasks,
@@ -55,6 +58,32 @@ describe("research task state", () => {
     ]);
 
     expect(recovered[0]?.status).toBe("pending");
+  });
+
+  it("未完成数量包含 partial 和 blocked，可重试数量单独保留", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const now = "2026-07-31T10:00:00.000Z";
+    const task = (taskId: string, status: "pending" | "partial" | "blocked" | "running" | "complete") => ({
+      ...createResearchTask({
+        taskId,
+        sourceIdea: `Yan帳/想法/${taskId}.md`,
+        question: `问题 ${taskId}`,
+        now,
+      }),
+      status,
+    });
+    await writeResearchTasks(vault.layout, [
+      task("task-pending", "pending"),
+      task("task-partial", "partial"),
+      task("task-blocked", "blocked"),
+      task("task-running", "running"),
+      task("task-complete", "complete"),
+    ]);
+
+    await expect(countPendingResearchTasks(vault.layout)).resolves.toBe(2);
+    await expect(countUnfinishedResearchTasks(vault.layout)).resolves.toBe(4);
+    await expect(countRunnableResearchTasks(vault.layout)).resolves.toBe(4);
   });
 
   it("兼容旧版缺少时间字段的研究任务，并补齐时间", async () => {

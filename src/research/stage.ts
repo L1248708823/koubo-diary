@@ -1,7 +1,10 @@
 import path from "node:path";
 import { isDiaryPath, isIdeaPath, isResearchPath } from "../config.js";
 import {
+  findResearchBriefForTask,
+  markResearchBriefIncomplete,
   markResearchPending,
+  ResearchWritebackError,
   validateResearchWriteback,
 } from "./brief.js";
 import {
@@ -151,16 +154,24 @@ export async function runResearchStage(args: {
           lastError: sourceError,
         };
       } else {
-        outcome = await runner.run({
-          vaultPath: layout.vaultPath,
-          layout,
-          task: running,
-          now: clock.now(),
-          action: candidate.status === "pending" ? "start" : "refresh",
-        });
+        try {
+          outcome = await runner.run({
+            vaultPath: layout.vaultPath,
+            layout,
+            task: running,
+            now: clock.now(),
+            action: candidate.status === "pending" ? "start" : "refresh",
+          });
+        } catch (error) {
+          if (!(error instanceof ResearchWritebackError)) throw error;
+          outcome = { status: "blocked", lastError: error.message };
+        }
       }
     }
 
+    let failureMarked = false;
+    let failureWritebackError: string | undefined;
+    let acceptedFailureBrief: string | undefined;
     if (outcome.status === "complete") {
       let writebackError: string | undefined;
       if (
@@ -177,6 +188,77 @@ export async function runResearchStage(args: {
         });
       }
       if (writebackError) {
+        const failureBrief = await resolveResearchFailureBrief(
+          layout,
+          running,
+          outcome.brief,
+        );
+        acceptedFailureBrief = failureBrief;
+        if (
+          failureBrief &&
+          shouldDowngradeBrief(running, outcome.brief, failureBrief)
+        ) {
+          try {
+            await markResearchBriefIncomplete({
+              layout,
+              briefPath: failureBrief,
+              status: "partial",
+            });
+          } catch (error) {
+            failureWritebackError = errorMessage(error);
+          }
+        }
+        try {
+          await markResearchPending(
+            {
+              vaultPath: layout.vaultPath,
+              layout,
+              task: running,
+              now: clock.now(),
+            },
+            "partial",
+            failureBrief,
+            writebackError,
+          );
+        } catch (error) {
+          failureWritebackError = appendResearchFailure(
+            failureWritebackError,
+            errorMessage(error),
+          );
+        }
+        failureMarked = true;
+        outcome = {
+          status: "partial",
+          ...(failureBrief ? { brief: failureBrief } : {}),
+          lastError: writebackError,
+        };
+      }
+    }
+    if (
+      !failureMarked &&
+      (outcome.status === "partial" || outcome.status === "blocked")
+    ) {
+      const failureBrief = await resolveResearchFailureBrief(
+        layout,
+        running,
+        outcome.brief,
+      );
+      acceptedFailureBrief = failureBrief;
+      if (
+        failureBrief &&
+        shouldDowngradeBrief(running, outcome.brief, failureBrief)
+      ) {
+        try {
+          await markResearchBriefIncomplete({
+            layout,
+            briefPath: failureBrief,
+            status: outcome.status,
+          });
+        } catch (error) {
+          failureWritebackError = errorMessage(error);
+        }
+      }
+      try {
         await markResearchPending(
           {
             vaultPath: layout.vaultPath,
@@ -184,21 +266,33 @@ export async function runResearchStage(args: {
             task: running,
             now: clock.now(),
           },
-          "partial",
-          outcome.brief && isResearchPath(outcome.brief, layout)
-            ? outcome.brief
-            : undefined,
+          outcome.status,
+          failureBrief,
+          outcome.lastError,
         );
-        outcome = {
-          status: "partial",
-          ...(outcome.brief ? { brief: outcome.brief } : {}),
-          lastError: writebackError,
-        };
+      } catch (error) {
+        failureWritebackError = appendResearchFailure(
+          failureWritebackError,
+          errorMessage(error),
+        );
       }
     }
-    const completed = applyResearchOutcome(running, outcome, clock.now());
+    const taskOutcome =
+      outcome.status === "complete"
+        ? outcome
+        : {
+            status: outcome.status,
+            ...(acceptedFailureBrief ? { brief: acceptedFailureBrief } : {}),
+            ...(outcome.lastError !== undefined
+              ? { lastError: outcome.lastError }
+              : {}),
+          };
+    const completed = applyResearchOutcome(running, taskOutcome, clock.now());
     tasks = replaceResearchTask(tasks, completed);
     await writeResearchTasks(layout, tasks);
+    if (failureWritebackError) {
+      throw new Error(`研究失败状态写回失败: ${failureWritebackError}`);
+    }
     processed += 1;
     if (
       firstFailure === undefined &&
@@ -250,7 +344,9 @@ function applyResearchOutcome(
     status: outcome.status,
     updated_at: now.toISOString(),
   };
-  if (outcome.lastError !== undefined) next.last_error = outcome.lastError;
+  if (outcome.status !== "complete") {
+    next.last_error = outcome.lastError ?? `研究任务状态为 ${outcome.status}`;
+  }
   if (outcome.brief !== undefined) next.brief = outcome.brief;
   return next;
 }
@@ -276,6 +372,48 @@ async function validateResearchTaskSource(
     }
   }
   return undefined;
+}
+
+async function resolveResearchFailureBrief(
+  layout: VaultLayout,
+  task: ResearchTask,
+  briefPath: string | undefined,
+): Promise<string | undefined> {
+  const candidates = [...new Set([briefPath, task.brief].filter(Boolean))] as string[];
+  for (const candidate of candidates) {
+    if (!isResearchPath(candidate, layout)) continue;
+    if (!(await pathExists(path.join(layout.vaultPath, candidate)))) continue;
+    const normalizedCandidate = candidate.replace(/\\/g, "/");
+    const matched = await findResearchBriefForTask(layout, {
+      ...task,
+      brief: normalizedCandidate,
+    });
+    if (matched === normalizedCandidate) return normalizedCandidate;
+  }
+  return undefined;
+}
+
+function appendResearchFailure(
+  previous: string | undefined,
+  next: string,
+): string {
+  return previous ? `${previous}; ${next}` : next;
+}
+
+function shouldDowngradeBrief(
+  task: ResearchTask,
+  outcomeBrief: string | undefined,
+  acceptedBrief: string | undefined,
+): boolean {
+  return (
+    acceptedBrief !== undefined &&
+    outcomeBrief !== undefined &&
+    (!task.brief || normalizePath(outcomeBrief) !== normalizePath(task.brief))
+  );
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, "/");
 }
 
 function errorMessage(error: unknown): string {
