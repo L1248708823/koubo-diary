@@ -114,6 +114,8 @@ Get-Content -LiteralPath (Join-Path $VaultPath "_processor\last-run.json") -Raw 
 VAULT_PATH=/var/lib/koubo/vault
 VAULT_GIT_MODE=remote
 GIT_REMOTE=origin
+VAULT_REMOTE_URL=https://github.com/L1248708823/Obsidian
+GIT_LOCK_PATH=/run/koubo-git.lock
 ```
 
 工具仓 `koubo-diary` 只负责部署 Node、前端和 skill；`VAULT_PATH` 才是实际日记 Obsidian 仓库。两者不能混用。

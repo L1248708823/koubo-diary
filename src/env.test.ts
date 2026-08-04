@@ -7,6 +7,7 @@ import {
   loadProcessorOptionsFromEnv,
   loadResearchConfigFromEnv,
   loadRuntimeLogConfigFromEnv,
+  loadVaultRuntimeConfigFromEnv,
 } from "./env.js";
 
 describe("agent provider config", () => {
@@ -56,6 +57,31 @@ describe("agent provider config", () => {
     vi.stubEnv("VAULT_GIT_MODE", "other");
 
     expect(() => loadIngestConfigFromEnv()).toThrow("VAULT_GIT_MODE");
+  });
+
+  it("生产 Git 模式要求真实日记仓 remote URL，并读取 Git 操作锁路径", () => {
+    vi.stubEnv("VAULT_GIT_MODE", "remote");
+    vi.stubEnv(
+      "VAULT_REMOTE_URL",
+      "https://github.com/L1248708823/Obsidian",
+    );
+    vi.stubEnv("GIT_LOCK_PATH", "/run/koubo-git.lock");
+
+    expect(loadVaultRuntimeConfigFromEnv()).toEqual({
+      gitMode: "remote",
+      gitRemote: "origin",
+      vaultRemoteUrl: "https://github.com/L1248708823/Obsidian",
+      gitLockPath: "/run/koubo-git.lock",
+    });
+  });
+
+  it("生产 Git 模式缺少 remote URL 时拒绝启动", () => {
+    vi.stubEnv("VAULT_GIT_MODE", "remote");
+    vi.stubEnv("VAULT_REMOTE_URL", "");
+
+    expect(() => loadVaultRuntimeConfigFromEnv()).toThrow(
+      "VAULT_REMOTE_URL",
+    );
   });
 
   it("读取 Yan帳 想法与研究目录配置", () => {

@@ -128,10 +128,11 @@ vault 根/
    - `INGEST_TOKEN`（长随机）  
    - `VAULT_PATH`  
    - `VAULT_GIT_MODE=remote`（生产指向真实 Obsidian vault 仓库，不是工具仓）
+   - `VAULT_REMOTE_URL=https://github.com/L1248708823/Obsidian`（用于启动时校验日记仓身份）
    - `DIARY_DIR=生活/日子一天天过去`、`IDEAS_DIR=Yan帳/想法`、`RESEARCH_DIR=Yan帳/研究`
    - `AGENT_PROVIDER=codex` 或 `AGENT_PROVIDER=claude`  
    - 对应 CLI 的 `CODEX_BIN` / `CLAUDE_BIN`，以及该 CLI 的本机登录或凭证  
-   - `LOCK_PATH` / `WAKE_FLAG_PATH`  
+   - `LOCK_PATH` / `GIT_LOCK_PATH` / `WAKE_FLAG_PATH`
 5. systemd  
    - `koubo-ingest.service`：常驻 `npm run ingest`（或 `npx tsx src/cli/run-ingest.ts`）  
    - `koubo-processor.service`：oneshot `npm run processor`  

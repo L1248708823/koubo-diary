@@ -128,6 +128,8 @@ CLAUDE_BIN=claude.cmd
 VAULT_PATH=/var/lib/koubo/vault
 VAULT_GIT_MODE=remote
 GIT_REMOTE=origin
+VAULT_REMOTE_URL=https://github.com/L1248708823/Obsidian
+GIT_LOCK_PATH=/run/koubo-git.lock
 ```
 
 生产进程从工具仓启动不会改变 Git 目标。代码通过 `VAULT_PATH` 创建 vault workspace 和 publisher，工具仓路径只用于找到 Node 程序与 skill。
@@ -135,6 +137,7 @@ GIT_REMOTE=origin
 生产线才验证以下行为：
 
 - 日记仓 pull、commit、push。
+- 日记仓根目录和 fetch/push remote 必须与 `VAULT_PATH`、`VAULT_REMOTE_URL` 一致。
 - 日记仓远端冲突时停止本轮并保留收件箱。
 - 生产 vault 的部署 key 和 remote 权限。
 - 唤醒文件、cron、systemd 单实例锁。

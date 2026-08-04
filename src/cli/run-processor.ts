@@ -34,6 +34,8 @@ async function main(): Promise<void> {
     options.layout.vaultPath,
     runtime.gitRemote,
     runtime.gitMode,
+    runtime.vaultRemoteUrl,
+    runtime.gitLockPath,
   );
   const lock = createFileLock(
     process.env.LOCK_PATH || "/run/koubo-processor.lock",

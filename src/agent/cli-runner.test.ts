@@ -228,6 +228,8 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("不得使用 Get-ChildItem Env:");
     expect(prompt).toContain("不得使用 rg --files");
     expect(prompt).toContain("不得读取列表之外的收件箱文件");
+    expect(prompt).toContain("文件隔离总则：可读文件仅限本轮 pendingInbox");
+    expect(prompt).toContain("内容整理阶段不得读取或写入 Yan帳/研究");
   });
 
   it("检测到模型容量错误时按上限重跑，并在后续成功后结束", async () => {

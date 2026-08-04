@@ -3,6 +3,9 @@ import path from "node:path";
 import type { Lock, LockHandle } from "../types.js";
 import { logInfo } from "./log.js";
 
+const DEFAULT_LOCK_WAIT_MS = 30_000;
+const DEFAULT_LOCK_RETRY_DELAY_MS = 100;
+
 /**
  * 文件锁（VPS 本地路径，不进 git）。
  * 用 O_EXCL 创建锁文件；持有进程退出后需人工或启动脚本清理陈旧锁。
@@ -38,6 +41,31 @@ export function createFileLock(lockPath: string): Lock {
       }
     },
   };
+}
+
+export async function withExclusiveLock<T>(
+  lock: Lock,
+  task: () => Promise<T>,
+  options: { timeoutMs?: number; retryDelayMs?: number } = {},
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LOCK_WAIT_MS;
+  const retryDelayMs = options.retryDelayMs ?? DEFAULT_LOCK_RETRY_DELAY_MS;
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    const handle = await lock.tryAcquire();
+    if (handle) {
+      try {
+        return await task();
+      } finally {
+        await handle.release();
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("锁等待超时");
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+  }
 }
 
 /** 写唤醒 flag；编排或旁路 watcher 可感知。 */

@@ -48,14 +48,22 @@ export function loadProcessorOptionsFromEnv(): ProcessorOptions {
 export function loadVaultRuntimeConfigFromEnv(): {
   gitRemote: string;
   gitMode: VaultGitMode;
+  vaultRemoteUrl?: string;
+  gitLockPath: string;
 } {
   const gitMode = env("VAULT_GIT_MODE", "remote");
   if (gitMode !== "remote" && gitMode !== "local") {
     throw new Error("VAULT_GIT_MODE 只支持 remote 或 local");
   }
+  const vaultRemoteUrl = env("VAULT_REMOTE_URL");
+  if (gitMode === "remote" && !vaultRemoteUrl) {
+    throw new Error("生产 Git 模式缺少 VAULT_REMOTE_URL");
+  }
   return {
     gitRemote: env("GIT_REMOTE", "origin")!,
     gitMode,
+    ...(vaultRemoteUrl ? { vaultRemoteUrl } : {}),
+    gitLockPath: env("GIT_LOCK_PATH", "/run/koubo-git.lock")!,
   };
 }
 

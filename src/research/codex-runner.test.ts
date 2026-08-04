@@ -187,6 +187,8 @@ describe("Codex research runner", () => {
     expect(prompt).toContain("国外和国际来源优先");
     expect(prompt).toContain("不得修改 _inbox");
     expect(prompt).toContain("不得执行 git");
+    expect(prompt).toContain("本地文件隔离：只能读取当前任务指定的 source_diary");
+    expect(prompt).toContain("不得读取收件箱、隔离区、工具仓");
   });
 });
 

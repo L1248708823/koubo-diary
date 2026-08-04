@@ -40,9 +40,21 @@ async function main(): Promise<void> {
   const layout = loadLayoutFromEnv();
   const cfg = loadIngestConfigFromEnv();
   const runtimeLogConfig = loadRuntimeLogConfigFromEnv();
-  await ensureVaultDirs(layout);
   const clock = { now: () => new Date() };
-  const access = resolveVaultAccess(layout.vaultPath, cfg.gitRemote, cfg.gitMode);
+  const access = resolveVaultAccess(
+    layout.vaultPath,
+    cfg.gitRemote,
+    cfg.gitMode,
+    cfg.vaultRemoteUrl,
+    cfg.gitLockPath,
+  );
+  if (cfg.gitMode === "remote") {
+    const prepared = await access.workspace.prepare();
+    if (!prepared.ok) {
+      throw new Error(`生产 vault 预检失败: ${prepared.reason}`);
+    }
+  }
+  await ensureVaultDirs(layout);
   const delivery = access.publisher
     ? createRemoteInboxDelivery(
         layout,
