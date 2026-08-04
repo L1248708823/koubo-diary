@@ -67,6 +67,63 @@ describe("CLI agent Windows 参数", () => {
     }
   });
 
+  it("Windows .cmd runner 保持完整回执 prompt 的引号和标记", async () => {
+    if (process.platform !== "win32") return;
+
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "koubo-cmd-schema-"));
+    const captureScript = path.join(tempDir, "capture.mjs");
+    const stateFile = path.join(tempDir, "args.json");
+    const commandFile = path.join(tempDir, "capture.cmd");
+    await writeFile(
+      captureScript,
+      [
+        'import { writeFileSync } from "node:fs";',
+        'let input = "";',
+        'process.stdin.setEncoding("utf8");',
+        'process.stdin.on("data", (chunk) => { input += chunk; });',
+        'process.stdin.on("end", () => writeFileSync(process.argv[2], JSON.stringify({ args: process.argv.slice(3), input }), "utf8"));',
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      commandFile,
+      [
+        "@echo off",
+        `"${process.execPath}" "${captureScript}" "${stateFile}" %*`,
+      ].join("\r\n") + "\r\n",
+      "utf8",
+    );
+
+    try {
+      const prompt = [
+        '回执 JSON：{"ok":true,"processed":[],"failed":[],"quarantine":[]}',
+        "```json",
+        '  "round_ended_at": "<ISO 时间>"',
+        "```",
+      ].join("\n");
+      await runCliProcess({
+        provider: "test-cmd-schema",
+        bin: commandFile,
+        args: [],
+        cwd: tempDir,
+        env: undefined,
+        timeoutMs: 5_000,
+        stdin: prompt,
+        capacityRetries: 0,
+        capacityRetryDelayMs: 0,
+      });
+
+      const captured = JSON.parse(await readFile(stateFile, "utf8")) as {
+        args: string[];
+        input: string;
+      };
+      expect(captured.args).toEqual([]);
+      expect(captured.input).toBe(prompt);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("提示词使用配置的收件箱和处理目录", () => {
     const layout = {
       ...defaultLayout("D:/vault"),
@@ -101,6 +158,53 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("round-cli-test");
     expect(prompt).not.toContain("_inbox");
     expect(prompt).not.toContain("_processor");
+  });
+
+  it("提示词直接包含当前回执 schema，并明确拒绝旧版字段", () => {
+    const prompt = buildProcessorPrompt(
+      {
+        vaultPath: "D:/vault",
+        layout: defaultLayout("D:/vault"),
+        maxPerRound: 1,
+        pendingInbox: ["_inbox/20260730-test.md"],
+        roundId: "round-receipt-schema-test",
+      },
+      "处理收件箱",
+      "Codex",
+    );
+
+    expect(prompt).toContain('"ok": true');
+    expect(prompt).toContain('"round_id": "round-receipt-schema-test"');
+    expect(prompt).toContain('"round_ended_at"');
+    expect(prompt).toContain('"processed"');
+    expect(prompt).toContain('"failed"');
+    expect(prompt).toContain('"quarantine"');
+    expect(prompt).toContain("不要使用旧版 items 或 processed_at 字段");
+    expect(prompt).not.toContain("见 skill 中的 schema");
+  });
+
+  it("提示词明确要求日记条目使用 captured_at 时间戳", () => {
+    const prompt = buildProcessorPrompt(
+      {
+        vaultPath: "D:/vault",
+        layout: defaultLayout("D:/vault"),
+        maxPerRound: 2,
+        pendingInbox: [
+          "_inbox/20260730-first.md",
+          "_inbox/20260730-second.md",
+        ],
+        roundId: "round-diary-time-test",
+      },
+      "处理收件箱",
+      "Codex",
+    );
+
+    expect(prompt).toContain("每条 done 收件项必须在对应日期日记中新增一个时间条目");
+    expect(prompt).toContain("frontmatter 的 captured_at");
+    expect(prompt).toContain("`- HH:mm `");
+    expect(prompt).toContain("同一天的多条记录合并到同一篇日记");
+    expect(prompt).toContain("时间戳不可省略");
+    expect(prompt).toContain("正文中用户自写的时间替代 captured_at");
   });
 
   it("提示词把内容整理限制在本轮快照文件，禁止全库和环境探索", () => {

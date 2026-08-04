@@ -60,7 +60,7 @@ Completion criterion：每条 snapshot 项恰有一个状态，两条 axis 都�
 
 ### 3. Diary write-back
 
-用 `captured_at` 按运行时区确定日期。`done` 条目追加到对应日记，已有日记保留原段落；无 Idea 时写时间戳和轻整理短段，有 Idea 时写时间戳、短钩子和实际想法 wikilink，不在日记复制想法全文。Write-back 必须具备 idempotency：同一 inbox id 重跑时不重复追加。
+用 `captured_at` 按运行时区确定日期和 `HH:mm` 显示时间。`done` 条目按 `captured_at` 先后追加到对应日记，同一天仍合并在同一篇，已有日记保留原段落。每条新增日记内容必须以 `- HH:mm ` 开头；无 Idea 时写时间戳和轻整理短段，有 Idea 时写时间戳、短钩子和实际想法 wikilink，不在日记复制想法全文。正文中的用户自写时间属于原始内容；若与前缀相同只保留一次，不得用它替代 `captured_at`。Write-back 必须具备 idempotency：同一 inbox id 重跑时不重复追加。
 
 Completion criterion：每条 `done` 都有真实日记，新增内容只出现一次，路径符合 diary contract。
 

@@ -11,6 +11,7 @@ import type {
 } from "../types.js";
 import {
   findResearchBriefForTask,
+  markResearchBriefIncomplete,
   markResearchPending,
   validateResearchWriteback,
 } from "./brief.js";
@@ -68,6 +69,7 @@ export function createCodexResearchRunner(
         reasoningEffort,
         extraArgs,
         prompt,
+        promptInStdin: true,
       });
       const previousBrief = await findResearchBriefForTask(ctx.layout, ctx.task);
       const previousBody = previousBrief
@@ -82,26 +84,30 @@ export function createCodexResearchRunner(
           cwd: ctx.vaultPath,
           env: options.env,
           timeoutMs,
+          stdin: prompt,
           context: ctx,
         });
       } catch (error) {
+        const reason = `Codex 研究 runner 失败: ${errorMessage(error)}`;
         await markResearchPending(
           ctx,
           "blocked",
           safeBriefPath(ctx),
+          reason,
         );
         return {
           status: "blocked" as const,
-          lastError: `Codex 研究 runner 失败: ${errorMessage(error)}`,
+          lastError: reason,
         };
       }
 
       const brief = await findResearchBriefForTask(ctx.layout, ctx.task);
       if (!brief) {
-        await markResearchPending(ctx, "blocked", safeBriefPath(ctx));
+        const reason = "Codex 研究 runner 完成但没有发现合法研究简报";
+        await markResearchPending(ctx, "blocked", safeBriefPath(ctx), reason);
         return {
           status: "blocked" as const,
-          lastError: "Codex 研究 runner 完成但没有发现合法研究简报",
+          lastError: reason,
         };
       }
       const writebackError = await validateResearchWriteback({
@@ -110,7 +116,12 @@ export function createCodexResearchRunner(
         briefPath: brief,
       });
       if (writebackError) {
-        await markResearchPending(ctx, "partial", brief);
+        await markResearchBriefIncomplete({
+          layout: ctx.layout,
+          briefPath: brief,
+          status: "partial",
+        });
+        await markResearchPending(ctx, "partial", brief, writebackError);
         return {
           status: "partial" as const,
           brief,
@@ -120,11 +131,12 @@ export function createCodexResearchRunner(
       if (previousBrief === brief) {
         const nextBody = await readFile(path.join(ctx.vaultPath, brief), "utf8");
         if (nextBody === previousBody) {
-          await markResearchPending(ctx, "partial", brief);
+          const reason = "Codex 研究 runner 未产生新的简报写回";
+          await markResearchPending(ctx, "partial", brief, reason);
           return {
             status: "partial" as const,
             brief,
-            lastError: "Codex 研究 runner 未产生新的简报写回",
+            lastError: reason,
           };
         }
       }
@@ -137,6 +149,7 @@ export function buildCodexResearchArgs(args: {
   model: string;
   reasoningEffort: string;
   prompt: string;
+  promptInStdin?: boolean;
   extraArgs?: string[];
 }): string[] {
   return [
@@ -150,7 +163,7 @@ export function buildCodexResearchArgs(args: {
     "-c",
     `model_reasoning_effort=${JSON.stringify(args.reasoningEffort)}`,
     ...(args.extraArgs ?? []),
-    args.prompt,
+    ...(args.promptInStdin ? [] : [args.prompt]),
   ];
 }
 

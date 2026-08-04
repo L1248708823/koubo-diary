@@ -26,7 +26,8 @@ export function createCodexAgentRunner(
     extraArgs: options.extraArgs ?? [],
     env: options.env,
     timeoutMs: options.timeoutMs ?? 10 * 60_000,
-    buildArgs(prompt, extraArgs) {
+    promptTransport: "stdin",
+    buildArgs(_prompt, extraArgs) {
       return [
         "exec",
         "--ephemeral",
@@ -34,7 +35,6 @@ export function createCodexAgentRunner(
         "-s",
         "workspace-write",
         ...extraArgs,
-        prompt,
       ];
     },
   });

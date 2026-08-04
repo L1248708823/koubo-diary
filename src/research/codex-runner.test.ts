@@ -38,6 +38,7 @@ describe("Codex research runner", () => {
       | {
           bin: string;
           args: string[];
+          stdin?: string;
           cwd: string;
           timeoutMs: number;
         }
@@ -53,6 +54,7 @@ describe("Codex research runner", () => {
         captured = {
           bin: input.bin,
           args: input.args,
+          stdin: input.stdin,
           cwd: input.cwd,
           timeoutMs: input.timeoutMs,
         };
@@ -86,7 +88,7 @@ describe("Codex research runner", () => {
         'model_reasoning_effort="max"',
       ]),
     );
-    const prompt = captured?.args.at(-1) ?? "";
+    const prompt = captured?.stdin ?? "";
     expect(prompt).toContain("research-brief");
     expect(prompt).toContain(context.task.task_id);
     expect(prompt).toContain(context.task.question);

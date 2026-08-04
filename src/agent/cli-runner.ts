@@ -11,6 +11,7 @@ export type CliAgentSpec = {
   extraArgs: string[];
   env: NodeJS.ProcessEnv | undefined;
   timeoutMs: number;
+  promptTransport?: "argument" | "stdin";
   buildArgs(prompt: string, extraArgs: string[]): string[];
 };
 
@@ -21,13 +22,14 @@ export type CliProcessOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv | undefined;
   timeoutMs: number;
+  stdin?: string;
   capacityRetries?: number;
   capacityRetryDelayMs?: number;
 };
 
 const DEFAULT_CAPACITY_RETRIES = 2;
 const DEFAULT_CAPACITY_RETRY_DELAY_MS = 3_000;
-export const PROCESSOR_PROMPT_VERSION = "scope-v2-single-line";
+export const PROCESSOR_PROMPT_VERSION = "scope-v4-diary-timestamp";
 
 /**
  * 在本处理环可见的契约上，两个 CLI 都是“改工作树并写回执”；provider 差异由各自 adapter 封装。
@@ -36,7 +38,11 @@ export function createCliAgentRunner(spec: CliAgentSpec): AgentRunner {
   return {
     async run(ctx: AgentContext): Promise<void> {
       const prompt = buildProcessorPrompt(ctx, spec.skill, spec.provider);
-      const args = spec.buildArgs(prompt, spec.extraArgs);
+      const promptTransport = spec.promptTransport ?? "argument";
+      const args = spec.buildArgs(
+        promptTransport === "argument" ? prompt : "",
+        spec.extraArgs,
+      );
       logInfo("agent.prompt_built", {
         provider: spec.provider,
         promptVersion: PROCESSOR_PROMPT_VERSION,
@@ -51,6 +57,7 @@ export function createCliAgentRunner(spec: CliAgentSpec): AgentRunner {
         cwd: ctx.vaultPath,
         env: spec.env,
         timeoutMs: spec.timeoutMs,
+        ...(promptTransport === "stdin" ? { stdin: prompt } : {}),
       });
 
       const receiptPath = path.join(
@@ -79,6 +86,22 @@ export function buildProcessorPrompt(
   const research = ctx.layout.researchDir;
   const processor = ctx.layout.processorDir;
   const staging = ctx.layout.stagingDir;
+  const receiptSchema = [
+    "{",
+    '  "ok": true,',
+    `  "round_id": "${ctx.roundId}",`,
+    '  "round_ended_at": "<ISO 时间>",',
+    '  "processed": [',
+    "    {",
+    `      "inbox": "${inbox}/文件名.md",`,
+    '      "status": "done",',
+    `      "diary": "${diary}/YYYY/YYYY-MM/YYYY-MM-DD.md"`,
+    "    }",
+    "  ],",
+    '  "failed": [],',
+    '  "quarantine": []',
+    "}",
+  ].join("\n");
   return [
     `你通过 ${provider} 运行。禁止使用全局 skills 和项目级别 skills，只允许使用我让你使用的 skills 或 MCP。`,
     `请按本提示中的「${skill}」处理契约处理本轮收件箱；本提示已经包含完整规则。`,
@@ -110,8 +133,18 @@ export function buildProcessorPrompt(
     "2. 不得执行任何 git 命令，包括 status、ls-files、commit、push、pull 和 config。",
     `3. 不要删除 ${inbox} 下的文件；只在回执里声明 done/failed/quarantine。`,
     "4. 写回以日记为轴；可选想法并互链（日记=钩子+链接，想法=全文）；待查登记研究任务，不在本阶段联网。",
+    "日记写回格式：每条 done 收件项必须在对应日期日记中新增一个时间条目；日期和显示时间必须来自该收件项 frontmatter 的 captured_at，按运行时区转换。",
+    "每条新增日记内容必须以 `- HH:mm ` 开头；无 Idea 时写时间戳和轻整理短段，有 Idea 时写时间戳、短钩子和实际想法 wikilink。",
+    "同一天的多条记录合并到同一篇日记，并按 captured_at 的先后顺序写入；已有日记内容保留，重跑同一 inbox id 不得重复追加。",
+    "时间戳不可省略，不得使用 round_id、处理时间、当前系统时间或正文中用户自写的时间替代 captured_at；正文中的自写时间属于原始内容，若与前缀相同只保留一次。",
     "5. 轻整理：去赘词/重复、保语气；禁止升格代写、扩写未说内容、伪调研结论。",
-    `6. 结束后必须写出 ${processor}/last-run.json（见 skill 中的 schema）。`,
+    `6. 结束后必须写出 ${processor}/last-run.json；只能使用下方回执格式，不要使用旧版 items 或 processed_at 字段。`,
+    "回执 JSON schema：",
+    "```json",
+    receiptSchema,
+    "```",
+    "processed 只放 status=done 的条目；failed 必须包含 inbox、status=failed、error；quarantine 必须包含 inbox、status=quarantine。",
+    "每条本轮快照 inbox 必须且只能在 processed、failed、quarantine 其中一个数组出现一次；回执中的 round_id 必须逐字等于本轮 round_id。",
     "7. 快照内每条 inbox 都必须在回执中交代，禁止漏报。",
   ].join("\n");
 }
@@ -168,8 +201,15 @@ async function runCliProcessOnce(opts: CliProcessOptions): Promise<void> {
       env: childEnv,
       windowsHide: true,
       shell: useWindowsShell,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    const stdout = child.stdout;
+    const stderr = child.stderr;
+    if (!stdout || !stderr) {
+      child.kill();
+      reject(new Error(`${opts.provider} agent 未能建立标准输出管道`));
+      return;
+    }
     logInfo("agent.started", {
       provider: opts.provider,
       bin: opts.bin,
@@ -177,19 +217,23 @@ async function runCliProcessOnce(opts: CliProcessOptions): Promise<void> {
       argCount: opts.args.length,
       shell: useWindowsShell,
       argTransport: useWindowsShell ? "cmd-single-line" : "native",
+      stdinTransport: opts.stdin !== undefined,
     });
     const outputChunks: Buffer[] = [];
     const errorChunks: Buffer[] = [];
-    child.stdout.on("data", (chunk) => {
+    stdout.on("data", (chunk) => {
       const buffer = chunk as Buffer;
       outputChunks.push(buffer);
       logAgentOutput(opts.provider, "stdout", buffer);
     });
-    child.stderr.on("data", (chunk) => {
+    stderr.on("data", (chunk) => {
       const buffer = chunk as Buffer;
       errorChunks.push(buffer);
       logAgentOutput(opts.provider, "stderr", buffer);
     });
+    if (opts.stdin !== undefined) {
+      child.stdin?.end(opts.stdin);
+    }
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       logError("agent.timeout", {
