@@ -32,6 +32,17 @@ npm run typecheck
 
 环境变量模板：生产看 `config/production.env.example`，本地看 `config/local.env.example`。真实配置勿提交。
 
+### 手机桌面安装
+
+捕捉端生产构建包含 PWA manifest、service worker 和 Yan帳 SVG 图标：
+
+```bash
+npm run web:build
+npm run web:preview -- --host 127.0.0.1 --port 4174
+```
+
+正式安装需要通过 HTTPS 访问部署后的捕捉端。Android Chrome 在菜单中选择安装应用或添加到主屏幕；iPhone 使用 Safari 的分享菜单选择添加到主屏幕。页面和 `ingestUrl` 都应使用 HTTPS，跨域部署时同时配置 CORS。局域网 HTTP 地址适合联调页面，不能作为正式 PWA 安装地址。
+
 | 文档 | 用途 |
 |------|------|
 | `docs/ops/local-test.md` | 本地启动、自动测、页面半集成 |

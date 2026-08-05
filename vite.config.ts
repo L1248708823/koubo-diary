@@ -9,8 +9,8 @@ const capturePort = Number.isFinite(configuredPort) ? configuredPort : 4173;
 export default defineConfig(({ command }) => ({
   root: "capture",
   plugins: [vue()],
-  // 本地 dev 才读取生成的 token；生产 build 不把它复制进 dist。
-  publicDir: command === "serve" ? "public" : false,
+  // 开发环境读取本机 token；生产构建只复制不含密钥的 PWA 静态资源。
+  publicDir: command === "serve" ? "public" : "pwa-public",
   server: {
     host: captureHost,
     port: capturePort,

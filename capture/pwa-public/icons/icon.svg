@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Yan帳</title>
+  <desc id="desc">A warm paper note with a spoken waveform.</desc>
+  <rect width="512" height="512" rx="112" fill="#26231d"/>
+  <path d="M132 86h204l44 44v298c0 20-16 36-36 36H132c-20 0-36-16-36-36V122c0-20 16-36 36-36Z" fill="#f7f5f0"/>
+  <path d="M336 86v72h72" fill="#ded8ca"/>
+  <path d="M336 86v72h72" fill="none" stroke="#26231d" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M148 208h184M148 254h116" fill="none" stroke="#8f5a14" stroke-width="14" stroke-linecap="round"/>
+  <path d="M158 354c12 30 37 48 70 48s58-18 70-48" fill="none" stroke="#8f5a14" stroke-width="14" stroke-linecap="round"/>
+  <path d="M178 332v42M218 314v60M258 326v48M298 304v70" fill="none" stroke="#8f5a14" stroke-width="14" stroke-linecap="round"/>
+</svg>
