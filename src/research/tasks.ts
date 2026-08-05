@@ -8,15 +8,21 @@ export function createResearchTask(input: {
   taskId: string;
   sourceDiary?: string;
   sourceIdea?: string;
+  relatedTaskIds?: string[];
+  relatedBriefs?: string[];
   question: string;
   now: string;
 }): ResearchTask {
+  const taskId = input.taskId.trim();
+  if (taskId.length === 0) {
+    throw new Error("研究任务 task_id 不能为空");
+  }
   const question = input.question.trim();
   if (question.length === 0) {
     throw new Error("研究任务 question 不能为空");
   }
   const task: ResearchTask = {
-    task_id: input.taskId,
+    task_id: taskId,
     question,
     status: "pending",
     created_at: input.now,
@@ -24,6 +30,10 @@ export function createResearchTask(input: {
   };
   if (input.sourceDiary !== undefined) task.source_diary = input.sourceDiary;
   if (input.sourceIdea !== undefined) task.source_idea = input.sourceIdea;
+  const relatedTaskIds = normalizeStringList(input.relatedTaskIds);
+  const relatedBriefs = normalizeStringList(input.relatedBriefs);
+  if (relatedTaskIds.length > 0) task.related_task_ids = relatedTaskIds;
+  if (relatedBriefs.length > 0) task.related_briefs = relatedBriefs;
   return task;
 }
 
@@ -113,7 +123,7 @@ export function dedupeResearchTasks(tasks: ResearchTask[]): ResearchTask[] {
 
     const newer = task.updated_at >= previous.updated_at ? task : previous;
     const older = newer === task ? previous : task;
-    byIdentity.set(identity, {
+    const merged: ResearchTask = {
       ...older,
       ...newer,
       created_at:
@@ -129,7 +139,26 @@ export function dedupeResearchTasks(tasks: ResearchTask[]): ResearchTask[] {
       ...(newer.brief === undefined && older.brief !== undefined
         ? { brief: older.brief }
         : {}),
-    });
+    };
+    const relatedTaskIds = normalizeStringList([
+      ...(older.related_task_ids ?? []),
+      ...(newer.related_task_ids ?? []),
+    ]);
+    const relatedBriefs = normalizeStringList([
+      ...(older.related_briefs ?? []),
+      ...(newer.related_briefs ?? []),
+    ]);
+    if (relatedTaskIds.length > 0) {
+      merged.related_task_ids = relatedTaskIds;
+    } else {
+      delete merged.related_task_ids;
+    }
+    if (relatedBriefs.length > 0) {
+      merged.related_briefs = relatedBriefs;
+    } else {
+      delete merged.related_briefs;
+    }
+    byIdentity.set(identity, merged);
   }
   return [...byIdentity.values()].sort((a, b) =>
     a.task_id.localeCompare(b.task_id),
@@ -152,6 +181,7 @@ function parseResearchTask(raw: unknown, fallbackTimestamp: string): ResearchTas
   const item = raw as Record<string, unknown>;
   if (
     typeof item.task_id !== "string" ||
+    item.task_id.trim().length === 0 ||
     typeof item.question !== "string" ||
     !isResearchTaskStatus(item.status)
   ) {
@@ -172,16 +202,26 @@ function parseResearchTask(raw: unknown, fallbackTimestamp: string): ResearchTas
     "updated_at",
   );
   const task: ResearchTask = {
-    task_id: item.task_id,
+    task_id: item.task_id.trim(),
     question,
     status: item.status,
     created_at: createdAt,
     updated_at: updatedAt,
   };
-  if (typeof item.source_diary === "string") task.source_diary = item.source_diary;
-  if (typeof item.source_idea === "string") task.source_idea = item.source_idea;
-  if (typeof item.brief === "string") task.brief = item.brief;
-  if (typeof item.last_error === "string") task.last_error = item.last_error;
+  const sourceDiary = parseOptionalString(item.source_diary, "source_diary");
+  const sourceIdea = parseOptionalString(item.source_idea, "source_idea");
+  if (sourceDiary !== undefined) task.source_diary = sourceDiary;
+  if (sourceIdea !== undefined) task.source_idea = sourceIdea;
+  if (item.related_task_ids !== undefined) {
+    task.related_task_ids = parseStringList(item.related_task_ids, "related_task_ids");
+  }
+  if (item.related_briefs !== undefined) {
+    task.related_briefs = parseStringList(item.related_briefs, "related_briefs");
+  }
+  const brief = parseOptionalString(item.brief, "brief");
+  const lastError = parseOptionalString(item.last_error, "last_error", true);
+  if (brief !== undefined) task.brief = brief;
+  if (lastError !== undefined) task.last_error = lastError;
   return task;
 }
 
@@ -213,4 +253,30 @@ function isResearchTaskStatus(value: unknown): value is ResearchTask["status"] {
 
 function isMissingFile(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function normalizeStringList(values: string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+}
+
+function parseOptionalString(
+  value: unknown,
+  field: string,
+  allowEmpty = false,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || (!allowEmpty && value.trim().length === 0)) {
+    throw new Error(`研究任务 ${field} 格式不合法`);
+  }
+  return value.trim();
+}
+
+function parseStringList(value: unknown, field: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string" && item.trim().length > 0)
+  ) {
+    throw new Error(`研究任务 ${field} 格式不合法`);
+  }
+  return normalizeStringList(value);
 }

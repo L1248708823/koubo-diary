@@ -13,6 +13,7 @@ import type {
   ReceiptItemDone,
   VaultLayout,
 } from "../types.js";
+import { readResearchTasks } from "../research/tasks.js";
 import {
   pathExists,
   readReceipt,
@@ -136,6 +137,18 @@ export async function acceptRound(args: {
   const recoveryPaths = await findRecoveryPaths(layout, snapshotInbox, changes);
   if (recoveryPaths.length > 0) {
     return unsafeChangeFailure(layout, recoveryPaths);
+  }
+
+  const researchTaskStateError = await validateChangedResearchTaskState(
+    layout,
+    changes,
+  );
+  if (researchTaskStateError) {
+    return {
+      ok: false,
+      reason: researchTaskStateError,
+      recoveryPaths: [researchTaskStatePath(layout)],
+    };
   }
 
   const rawReceipt = await readReceipt(layout);
@@ -424,6 +437,36 @@ async function validateChangedResearchLinks(
   return undefined;
 }
 
+async function validateChangedResearchTaskState(
+  layout: VaultLayout,
+  changes: ChangedPath[],
+): Promise<string | undefined> {
+  const statePath = researchTaskStatePath(layout);
+  const changedState = changes.some((change) =>
+    changedPathNames(change).some((changedPath) => normalize(changedPath) === statePath),
+  );
+  if (!changedState) return undefined;
+
+  if (!(await pathExists(path.join(layout.vaultPath, statePath)))) {
+    return `研究任务状态文件不能被删除: ${statePath}`;
+  }
+
+  try {
+    await readResearchTasks(layout);
+    return undefined;
+  } catch (error) {
+    return `研究任务状态格式不合法: ${errorMessage(error)}`;
+  }
+}
+
+function researchTaskStatePath(layout: VaultLayout): string {
+  return normalize(`${layout.processorDir}/research-tasks.json`);
+}
+
 function extractWikilinkTargets(body: string): string[] {
   return [...body.matchAll(/\[\[([^\]]+)\]\]/g)].map((match) => match[1] ?? "");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

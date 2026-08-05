@@ -255,6 +255,8 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("文件名必须使用收件项 captured_at 的日期");
     expect(prompt).toContain("我想");
     expect(prompt).toContain("不能单独触发想法");
+    expect(prompt).toContain("已有知识和推理足够时不创建研究任务");
+    expect(prompt).toContain("确实需要外部资料、事实核验、当前信息或方案比较时才创建研究任务");
   });
 
   it("检测到模型容量错误时按上限重跑，并在后续成功后结束", async () => {

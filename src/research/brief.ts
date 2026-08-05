@@ -14,11 +14,8 @@ import type {
 } from "../types.js";
 import { pathExists } from "../vault/fs.js";
 
-export type ResearchSourceKind =
-  | "original"
-  | "independent"
-  | "counter"
-  | "local_official";
+/** 来源类型由问题决定，保留字符串以支持领域专用的来源分类。 */
+export type ResearchSourceKind = string;
 
 export type ResearchSource = {
   id: string;
@@ -86,18 +83,6 @@ export class ResearchReadError extends Error {
     this.name = "ResearchReadError";
   }
 }
-
-const REQUIRED_HEADINGS = [
-  "## Research question",
-  "## Executive summary",
-  "## Evidence and facts",
-  "## Perspectives and red-team review",
-  "## Unknowns and limitations",
-  "## Scope and method",
-  "## Sources",
-  "## Related notes",
-  "## Follow-up ideas",
-];
 
 export function createResearchBriefRunner(
   adapter: ResearchSourceAdapter,
@@ -257,14 +242,8 @@ export async function validateResearchWriteback(args: {
   ) {
     return `研究简报缺少 source_idea 回链: ${briefPath}`;
   }
-  for (const heading of REQUIRED_HEADINGS) {
-    const section = extractSection(body, heading);
-    if (!section) {
-      return `研究简报缺少章节: ${heading}`;
-    }
-    const sectionError = validateBriefSection(heading, section, task);
-    if (sectionError) return sectionError;
-  }
+  const contentError = validateFlexibleBriefBody(body);
+  if (contentError) return contentError;
 
   const briefLink = toWikilink(briefPath);
   for (const sourcePath of sourcePaths(task)) {
@@ -278,6 +257,9 @@ export async function validateResearchWriteback(args: {
         `研究来源读取失败: ${sourcePath}: ${errorMessage(error)}`,
         error,
       );
+    }
+    if (!body.includes(toWikilink(sourcePath))) {
+      return `研究简报缺少来源回链: ${sourcePath}`;
     }
     if (!sourceBody.includes(briefLink)) {
       return `研究来源缺少简报回链: ${sourcePath}`;
@@ -293,43 +275,120 @@ export async function validateResearchWriteback(args: {
       return `研究来源仍保留失败原因: ${sourcePath}`;
     }
   }
+  for (const relatedBrief of task.related_briefs ?? []) {
+    if (!isResearchPath(relatedBrief, layout)) {
+      return `关联研究简报路径不合法: ${relatedBrief}`;
+    }
+    if (!(await pathExists(path.join(layout.vaultPath, relatedBrief)))) {
+      return `关联研究简报不存在: ${relatedBrief}`;
+    }
+    if (!body.includes(toWikilink(relatedBrief))) {
+      return `研究简报缺少关联研究回链: ${relatedBrief}`;
+    }
+  }
   return undefined;
 }
 
-function validateBriefSection(
-  heading: string,
-  section: string,
-  task: ResearchTask,
-): string | undefined {
-  if (heading === "## Evidence and facts") {
-    if (!/(证据|evidence)/i.test(section) || !/(来源|source)/i.test(section)) {
-      return "研究简报证据章节缺少证据锚点";
-    }
+function validateFlexibleBriefBody(body: string): string | undefined {
+  const content = body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  if (!/^#\s+\S/m.test(content)) {
+    return "研究简报缺少标题";
   }
-  if (heading === "## Perspectives and red-team review") {
-    if (!/(反方|red[- ]?team|counter)/i.test(section)) {
-      return "研究简报多视角章节缺少反方审查";
-    }
+
+  const sections = parseMarkdownSections(content);
+  const evidenceSections = sections.filter((section) =>
+    /(事实|证据|发现|结果|观察|资料|evidence|findings?|results?|observations?)/i.test(
+      section.heading,
+    ),
+  );
+  if (!hasSectionContent(evidenceSections)) {
+    return "研究简报缺少事实或证据内容";
   }
-  if (heading === "## Sources") {
-    if (!/(类型|kind|source)/i.test(section)) {
-      return "研究简报来源章节缺少来源资料";
-    }
-    if (!/(https?:\/\/\S+|无法核验|未知|unknown)/i.test(section)) {
-      return "研究简报来源章节缺少 URL 或不可核验说明";
-    }
+
+  const analysisSections = sections.filter((section) =>
+    /(分析|推断|判断|结论|建议|推理|analysis|inference|reasoning|assessment|interpretation|recommendation)/i.test(
+      section.heading,
+    ),
+  );
+  if (!hasSectionContent(analysisSections)) {
+    return "研究简报缺少推断或分析内容";
   }
-  if (heading === "## Scope and method" && !/(停止|stop)/i.test(section)) {
-    return "研究简报范围与方法章节缺少停止依据";
+
+  const unknownSections = sections.filter((section) =>
+    /(未知|限制|不确定|待核实|开放问题|unknown|limitation|uncertain|caveat|open question)/i.test(
+      section.heading,
+    ),
+  );
+  if (!hasSectionContent(unknownSections)) {
+    return "研究简报缺少未知点或限制内容";
   }
-  if (heading === "## Related notes") {
-    for (const sourcePath of sourcePaths(task)) {
-      if (!section.includes(toWikilink(sourcePath))) {
-        return `研究简报关联笔记缺少来源回链: ${sourcePath}`;
-      }
-    }
+
+  const methodSections = sections.filter((section) =>
+    /(方法|范围|研究过程|检索策略|method|scope|process|methodology)/i.test(
+      section.heading,
+    ),
+  );
+  if (!hasSectionContent(methodSections)) {
+    return "研究简报缺少研究方法或范围内容";
+  }
+  const methodContent = methodSections.map((section) => section.body).join("\n");
+  if (
+    !/(停止|停止依据|截止|预算|无法继续|stopping|stop|budget|no further|inaccessible)/i.test(
+      methodContent,
+    )
+  ) {
+    return "研究简报缺少停止依据";
+  }
+
+  const sourceSections = sections.filter((section) =>
+    /(来源|资料|参考|出处|source|reference|provenance|bibliography)/i.test(
+      section.heading,
+    ),
+  );
+  if (!hasSectionContent(sourceSections)) {
+    return "研究简报缺少来源内容";
+  }
+  const sourceContent = sourceSections.map((section) => section.body).join("\n");
+  if (
+    !/(https?:\/\/\S+|无法核验|不可核验|未找到可靠来源|source unavailable|unverifiable)/i.test(
+      sourceContent,
+    )
+  ) {
+    return "研究简报缺少可核验来源或不可核验说明";
   }
   return undefined;
+}
+
+type MarkdownSection = {
+  level: number;
+  heading: string;
+  body: string;
+};
+
+function parseMarkdownSections(content: string): MarkdownSection[] {
+  const headings = [
+    ...content.matchAll(/^#{2,6}[ \t]+(.+?)[ \t]*(?:\r\n|\n|$)/gm),
+  ];
+  return headings.map((heading, index) => {
+    const start = (heading.index ?? 0) + heading[0].length;
+    const level = heading[0].match(/^#+/)?.[0].length ?? 2;
+    const nextSection = headings
+      .slice(index + 1)
+      .find((candidate) => {
+        const candidateLevel = candidate[0].match(/^#+/)?.[0].length ?? 2;
+        return candidateLevel <= level;
+      });
+    const end = nextSection?.index ?? content.length;
+    return {
+      level,
+      heading: heading[1]?.trim() ?? "",
+      body: content.slice(start, end).trim(),
+    };
+  });
+}
+
+function hasSectionContent(sections: MarkdownSection[]): boolean {
+  return sections.some((section) => section.body.length > 0);
 }
 
 export async function markResearchBriefIncomplete(args: {
@@ -370,13 +429,6 @@ function validateEvidenceBundle(
     return "研究简报问题必须保留任务的原始问题";
   }
   if (bundle.facts.length === 0) return "研究证据缺少事实与证据";
-  if (bundle.perspectives.length === 0) return "研究证据缺少多视角";
-  if (!bundle.perspectives.some((perspective) => perspective.redTeam)) {
-    return "研究证据缺少反方审查";
-  }
-  if (bundle.unknowns.length === 0 || bundle.limitations.length === 0) {
-    return "研究证据缺少未知点或限制";
-  }
   if (bundle.method.length === 0 || !bundle.stopReason.trim()) {
     return "研究证据缺少研究方法或停止依据";
   }
@@ -397,11 +449,6 @@ function validateEvidenceBundle(
       return `已核验研究来源缺少完整元数据: ${source.id}`;
     }
     sourceMap.set(source.id, source);
-  }
-  for (const kind of ["original", "independent", "counter"] as const) {
-    if (![...sourceMap.values()].some((source) => source.kind === kind)) {
-      return `研究来源缺少 ${kind} 类型资料`;
-    }
   }
   for (const claim of bundle.facts) {
     const error = validateSourceReferences(claim.sourceIds, sourceMap);
@@ -599,72 +646,109 @@ function renderResearchBrief(
     "",
     bundle.executiveSummary.trim(),
     "",
-    "## Evidence and facts",
-    "",
   ];
 
-  for (const fact of bundle.facts) {
+  if (bundle.facts.length > 0) {
+    lines.push("## Evidence and facts", "");
+    for (const fact of bundle.facts) {
+      lines.push(
+        `- **${oneLine(fact.claim)}**`,
+        `  - 证据：${oneLine(fact.evidence)}`,
+        `  - 来源：${fact.sourceIds.join(", ")}`,
+      );
+    }
+  }
+
+  if (bundle.inferences.length > 0 || bundle.recommendations.length > 0) {
+    lines.push("", "## Analysis", "");
+    if (bundle.inferences.length > 0) {
+      lines.push("### Inferences", "", ...bulletLines(bundle.inferences));
+    }
+    if (bundle.recommendations.length > 0) {
+      lines.push("", "### Recommendations", "", ...bulletLines(bundle.recommendations));
+    }
+  } else {
     lines.push(
-      `- **${oneLine(fact.claim)}**`,
-      `  - 证据：${oneLine(fact.evidence)}`,
-      `  - 来源：${fact.sourceIds.join(", ")}`,
+      "",
+      "## Analysis",
+      "",
+      "- 无额外推断或建议，当前结论仅限事实和证据范围。",
+    );
+  }
+  if (bundle.perspectives.length > 0) {
+    lines.push("", "## Perspectives and red-team review", "");
+    for (const perspective of bundle.perspectives) {
+      lines.push(
+        `### ${oneLine(perspective.label)}${perspective.redTeam ? "（反方审查）" : ""}`,
+        "",
+        `- 观点：${oneLine(perspective.viewpoint)}`,
+        `- 来源：${perspective.sourceIds.join(", ")}`,
+        "",
+      );
+    }
+  }
+
+  if (bundle.unknowns.length > 0 || bundle.limitations.length > 0) {
+    lines.push("", "## Unknowns and limitations", "");
+    if (bundle.unknowns.length > 0) {
+      lines.push("### Unknowns", "", ...bulletLines(bundle.unknowns));
+    }
+    if (bundle.limitations.length > 0) {
+      lines.push("", "### Limitations", "", ...bulletLines(bundle.limitations));
+    }
+  } else {
+    lines.push(
+      "",
+      "## Unknowns and limitations",
+      "",
+      "- 当前没有记录到额外的未知点或限制。",
+    );
+  }
+  if (bundle.method.length > 0 || bundle.stopReason.trim()) {
+    lines.push("", "## Scope and method", "", ...bulletLines(bundle.method));
+    if (bundle.stopReason.trim()) {
+      lines.push(`- 停止依据：${oneLine(bundle.stopReason)}`);
+    }
+  }
+  if (bundle.sources.length > 0) {
+    lines.push("", "## Sources", "");
+    for (const source of bundle.sources) {
+      const displayTitle = source.verified
+        ? oneLine(source.title)
+        : "未知（无法核验）";
+      lines.push(
+        `### ${source.id} ${displayTitle}`,
+        `- 类型：${source.kind}`,
+        `- 作者或机构：${source.verified ? unknownIfEmpty(source.authorOrInstitution) : "未知（无法核验）"}`,
+        `- 发布日期：${source.verified ? unknownIfEmpty(source.publishedAt) : "未知（无法核验）"}`,
+        `- 访问日期：${source.verified ? unknownIfEmpty(source.accessedAt) : "未知（无法核验）"}`,
+        `- 完整 URL：${source.verified && source.url ? `[${source.url}](${source.url})` : "未知（无法核验）"}`,
+        `- 适用范围：${oneLine(source.scope)}`,
+        `- 限制：${oneLine(source.limitations)}`,
+        `- 证据摘录：${oneLine(source.evidence)}`,
+        "",
+      );
+    }
+  }
+
+  if ((ctx.task.related_briefs ?? []).length > 0) {
+    lines.push("", "## Related research", "");
+    lines.push(
+      ...(ctx.task.related_briefs ?? []).map((brief) => `- ${toWikilink(brief)}`),
     );
   }
 
-  lines.push("", "### Inferences", "");
-  lines.push(...bulletLines(bundle.inferences));
-  lines.push("", "### Recommendations", "");
-  lines.push(...bulletLines(bundle.recommendations));
-  lines.push("", "## Perspectives and red-team review", "");
-  for (const perspective of bundle.perspectives) {
-    lines.push(
-      `### ${oneLine(perspective.label)}${perspective.redTeam ? "（反方审查）" : ""}`,
-      "",
-      `- 观点：${oneLine(perspective.viewpoint)}`,
-      `- 来源：${perspective.sourceIds.join(", ")}`,
-      "",
-    );
-  }
-
-  lines.push("## Unknowns and limitations", "", "### Unknowns", "");
-  lines.push(...bulletLines(bundle.unknowns));
-  lines.push("", "### Limitations", "");
-  lines.push(...bulletLines(bundle.limitations));
-  lines.push("", "## Scope and method", "");
-  lines.push(...bulletLines(bundle.method));
-  lines.push(`- 停止依据：${oneLine(bundle.stopReason)}`, "");
-  lines.push("## Sources", "");
-  for (const source of bundle.sources) {
-    const displayTitle = source.verified
-      ? oneLine(source.title)
-      : "未知（无法核验）";
-    lines.push(
-      `### ${source.id} ${displayTitle}`,
-      `- 类型：${source.kind}`,
-      `- 作者或机构：${source.verified ? unknownIfEmpty(source.authorOrInstitution) : "未知（无法核验）"}`,
-      `- 发布日期：${source.verified ? unknownIfEmpty(source.publishedAt) : "未知（无法核验）"}`,
-      `- 访问日期：${source.verified ? unknownIfEmpty(source.accessedAt) : "未知（无法核验）"}`,
-      `- 完整 URL：${source.verified && source.url ? `[${source.url}](${source.url})` : "未知（无法核验）"}`,
-      `- 适用范围：${oneLine(source.scope)}`,
-      `- 限制：${oneLine(source.limitations)}`,
-      `- 证据摘录：${oneLine(source.evidence)}`,
-      "",
-    );
-  }
-
-  lines.push("## Related notes", "");
+  lines.push("", "## Related notes", "");
   for (const sourcePath of sourcePaths(ctx.task)) {
     lines.push(`- ${toWikilink(sourcePath)}`);
   }
-  lines.push("", "## Follow-up ideas", "");
   if (bundle.followUpIdeas && bundle.followUpIdeas.length > 0) {
+    lines.push("", "## Follow-up ideas", "");
     lines.push(
       ...bundle.followUpIdeas.map(
         (idea) => `- ${oneLine(idea)}（来源简报：${toWikilink(target.relativePath)}）`,
       ),
     );
-  } else {
-    lines.push("- 暂无已确认的后续想法。");
   }
 
   if (target.previousBody !== undefined) {

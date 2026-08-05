@@ -185,6 +185,9 @@ describe("Codex research runner", () => {
     expect(prompt).toContain(context.layout.diaryDir);
     expect(prompt).toContain(context.task.source_diary!);
     expect(prompt).toContain("国外和国际来源优先");
+    expect(prompt).toContain("不使用中文网站作为信源");
+    expect(prompt).toContain("不强制固定章节、来源数量或搜索轮数");
+    expect(prompt).toContain("只有在争议、比较、较高风险或用户明确要求时加入反方观点");
     expect(prompt).toContain("不得修改 _inbox");
     expect(prompt).toContain("不得执行 git");
     expect(prompt).toContain("本地文件隔离：只能读取当前任务指定的 source_diary");

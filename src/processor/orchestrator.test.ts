@@ -199,6 +199,46 @@ describe("processor orchestrator (seam 1)", () => {
     expect(result.reason).toContain("研究任务状态格式不合法");
   });
 
+  it("内容 agent 写入非法研究任务状态时不删除收件项", async () => {
+    const { vault, lock, workspace, captureHead, clock } = await setup();
+    const inboxRel = await seedInbox(vault.layout, "研究状态格式错误");
+    await captureHead();
+    const diaryRel = `${vault.layout.diaryDir}/2026/2026-07/2026-07-29.md`;
+
+    const agent = createFakeAgent(async ({ layout, pendingInbox }) => {
+      await writeDiary(layout, "2026/2026-07/2026-07-29.md", "日记写回\n");
+      await writeFile(
+        path.join(layout.vaultPath, layout.processorDir, "research-tasks.json"),
+        JSON.stringify({ invalid: true }),
+        "utf8",
+      );
+      return {
+        ok: true,
+        round_ended_at: clock.now().toISOString(),
+        processed: [{ inbox: pendingInbox[0]!, status: "done", diary: diaryRel }],
+        failed: [],
+        quarantine: [],
+      };
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      clock,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.reason).toContain("研究任务状态格式不合法");
+    expect(await pathExists(path.join(vault.root, inboxRel))).toBe(true);
+    expect(
+      await pathExists(
+        path.join(vault.root, vault.layout.processorDir, "research-tasks.json"),
+      ),
+    ).toBe(false);
+  });
+
   it("没有 research runner 时明确报告未完成研究", async () => {
     const { vault, lock, workspace, clock } = await setup();
     const diary = await writeDiary(

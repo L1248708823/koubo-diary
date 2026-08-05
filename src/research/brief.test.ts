@@ -177,6 +177,140 @@ describe("research brief write-back", () => {
     ).toHaveLength(1);
   });
 
+  it("按问题需要接受不固定章节和来源结构", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary);
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "task-flexible-structure",
+        sourceDiary: diary,
+        question: "当地官方资料是否足以回答这个制度问题？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+
+    const result = await runResearchStage({
+      layout: vault.layout,
+      maxResearchPerRound: 5,
+      runner: createResearchBriefRunner({
+        async collect({ task }) {
+          return {
+            title: "制度问题研究",
+            question: task.question,
+            executiveSummary: "现有资料可以回答主要问题，但适用范围有限。",
+            facts: [
+              {
+                claim: "官方资料明确说明了适用范围。",
+                evidence: "资料正文列出了适用条件。",
+                sourceIds: ["official"],
+              },
+            ],
+            inferences: ["该结论只适用于资料明确覆盖的范围。"],
+            recommendations: [],
+            perspectives: [],
+            unknowns: ["不同地区的执行差异仍未核实。"],
+            limitations: [],
+            method: ["核对官方资料并记录适用范围。"],
+            stopReason: "新增资料不会改变当前范围判断。",
+            sources: [
+              {
+                id: "official",
+                kind: "local_official",
+                title: "Official policy material",
+                authorOrInstitution: "Public Institution",
+                publishedAt: "2025-01-01",
+                accessedAt: "2026-08-01",
+                url: "https://example.com/official",
+                scope: "制度适用范围",
+                limitations: "不覆盖地区执行差异",
+                evidence: "资料列出适用条件。",
+                verified: true,
+              },
+            ],
+          };
+        },
+      }),
+      clock,
+    });
+
+    const task = (await readResearchTasks(vault.layout))[0]!;
+    const body = await readFile(path.join(vault.root, task.brief!), "utf8");
+    expect(result).toMatchObject({ processed: 1, pending: 0, progressed: true });
+    expect(task.status).toBe("complete");
+    expect(body).toContain("## Evidence and facts");
+    expect(body).not.toContain("## Perspectives and red-team review");
+    expect(body).not.toContain("## Recommendations");
+  });
+
+  it("研究问题变化时创建新任务并链接旧研究", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary);
+    const originalTask = createResearchTask({
+      taskId: "task-original-question",
+      sourceDiary: diary,
+      question: "原始问题如何验证？",
+      now: clock.now().toISOString(),
+    });
+    await writeResearchTasks(vault.layout, [originalTask]);
+
+    const runWithQuestion = async () =>
+      runResearchStage({
+        layout: vault.layout,
+        maxResearchPerRound: 5,
+        runner: createResearchBriefRunner({
+          async collect({ task }) {
+            return videoAnalysisEvidence({
+              question: task.question,
+              title: `研究：${task.question}`,
+            });
+          },
+        }),
+        clock,
+      });
+
+    await runWithQuestion();
+    const completedOriginal = (await readResearchTasks(vault.layout))[0]!;
+    const changedTask = createResearchTask({
+      taskId: "task-changed-question",
+      sourceDiary: diary,
+      question: "问题范围改变后如何验证？",
+      relatedTaskIds: [completedOriginal.task_id],
+      now: "2026-08-01T13:00:00.000Z",
+    });
+    await writeSourceNote(vault, diary, true);
+    await writeResearchTasks(vault.layout, [completedOriginal, changedTask]);
+
+    await runWithQuestion();
+
+    const tasks = await readResearchTasks(vault.layout);
+    const nextTask = tasks.find((task) => task.task_id === changedTask.task_id)!;
+    const previousTask = tasks.find(
+      (task) => task.task_id === completedOriginal.task_id,
+    )!;
+    const nextBody = await readFile(path.join(vault.root, nextTask.brief!), "utf8");
+    const previousBody = await readFile(
+      path.join(vault.root, completedOriginal.brief!),
+      "utf8",
+    );
+    expect(nextTask.brief).toBeDefined();
+    expect(nextTask.brief).not.toBe(completedOriginal.brief);
+    expect(nextTask.related_briefs).toContain(completedOriginal.brief);
+    expect(previousTask.related_task_ids).toContain(changedTask.task_id);
+    expect(nextBody).toContain("## Related research");
+    expect(nextBody).toContain(
+      `[[${completedOriginal.brief!.replace(/\.md$/, "")}]]`,
+    );
+    expect(previousBody).toContain(
+      `[[${nextTask.brief!.replace(/\.md$/, "")}]]`,
+    );
+  });
+
   it("证据不足时保留研究候选和 needs_research", async () => {
     const vault = await createTempVault();
     vaults.push(vault);
@@ -585,7 +719,7 @@ describe("research brief write-back", () => {
     const savedTask = (await readResearchTasks(vault.layout))[0]!;
     expect(result.processed).toBe(1);
     expect(savedTask.status).toBe("partial");
-    expect(savedTask.last_error).toContain("研究简报缺少章节");
+    expect(savedTask.last_error).toContain("研究简报缺少");
     expect(await readFile(path.join(vault.root, diary), "utf8")).toContain(
       "needs_research: true",
     );

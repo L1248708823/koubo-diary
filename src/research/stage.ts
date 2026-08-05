@@ -1,3 +1,4 @@
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDiaryPath, isIdeaPath, isResearchPath } from "../config.js";
 import {
@@ -78,13 +79,14 @@ export async function runResearchStage(args: {
   try {
     tasks = recoverRunningResearchTasks(await readResearchTasks(layout));
     const normalized = dedupeResearchTasks(tasks);
+    const hydrated = hydrateResearchRelations(normalized);
     if (
-      normalized.length > 0 &&
-      JSON.stringify(normalized) !== JSON.stringify(tasks)
+      hydrated.length > 0 &&
+      JSON.stringify(hydrated) !== JSON.stringify(tasks)
     ) {
-      await writeResearchTasks(layout, normalized);
+      await writeResearchTasks(layout, hydrated);
     }
-    tasks = normalized;
+    tasks = hydrated;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logError("processor.research_state_read_failed", { message });
@@ -186,6 +188,13 @@ export async function runResearchStage(args: {
           task: running,
           briefPath: outcome.brief,
         });
+        if (!writebackError) {
+          writebackError = await ensureRelatedBriefBacklinks({
+            layout,
+            briefPath: outcome.brief,
+            relatedBriefs: running.related_briefs ?? [],
+          });
+        }
       }
       if (writebackError) {
         const failureBrief = await resolveResearchFailureBrief(
@@ -303,6 +312,7 @@ export async function runResearchStage(args: {
     logInfo("processor.research_task_finished", {
       taskId: completed.task_id,
       status: completed.status,
+      ...(completed.last_error ? { error: completed.last_error } : {}),
     });
   }
 
@@ -331,6 +341,114 @@ function replaceResearchTask(
   return tasks.map((task) =>
     task.task_id === replacement.task_id ? replacement : task,
   );
+}
+
+function hydrateResearchRelations(tasks: ResearchTask[]): ResearchTask[] {
+  const byId = new Map(tasks.map((task) => [task.task_id, task]));
+  const byBrief = new Map(
+    tasks
+      .filter((task): task is ResearchTask & { brief: string } => task.brief !== undefined)
+      .map((task) => [normalizePath(task.brief), task.task_id]),
+  );
+  const directTaskLinks = new Map<string, string[]>();
+  const reverseTaskLinks = new Map<string, Set<string>>();
+  for (const task of tasks) {
+    const relatedTaskIds = normalizeStringList([
+      ...(task.related_task_ids ?? []),
+      ...(task.related_briefs ?? [])
+        .map((brief) => byBrief.get(normalizePath(brief)))
+        .filter((taskId): taskId is string => taskId !== undefined),
+    ]).filter((taskId) => taskId !== task.task_id && byId.has(taskId));
+    directTaskLinks.set(task.task_id, relatedTaskIds);
+    for (const relatedTaskId of relatedTaskIds) {
+      if (relatedTaskId === task.task_id || !byId.has(relatedTaskId)) continue;
+      const links = reverseTaskLinks.get(relatedTaskId) ?? new Set<string>();
+      links.add(task.task_id);
+      reverseTaskLinks.set(relatedTaskId, links);
+    }
+  }
+  return tasks.map((task) => {
+    const relatedTaskIds = normalizeStringList([
+      ...(directTaskLinks.get(task.task_id) ?? []),
+      ...(reverseTaskLinks.get(task.task_id) ?? []),
+    ]).filter((taskId) => taskId !== task.task_id);
+    const relatedBriefs = [
+      ...(task.related_briefs ?? []),
+      ...relatedTaskIds
+        .map((taskId) => byId.get(taskId)?.brief)
+        .filter((brief): brief is string => brief !== undefined),
+    ];
+    const uniqueBriefs = [...new Set(relatedBriefs)];
+    const next = { ...task };
+    if (relatedTaskIds.length > 0) next.related_task_ids = relatedTaskIds;
+    if (uniqueBriefs.length > 0) next.related_briefs = uniqueBriefs;
+    return next;
+  });
+}
+
+async function ensureRelatedBriefBacklinks(args: {
+  layout: VaultLayout;
+  briefPath: string;
+  relatedBriefs: string[];
+}): Promise<string | undefined> {
+  const currentBrief = normalizePath(args.briefPath);
+  const currentLink = toWikilink(currentBrief);
+  for (const relatedBrief of normalizeStringList(args.relatedBriefs)) {
+    const normalizedRelated = normalizePath(relatedBrief);
+    if (normalizedRelated === currentBrief) {
+      return `研究简报不能关联自身: ${currentBrief}`;
+    }
+    if (!isResearchPath(normalizedRelated, args.layout)) {
+      return `关联研究简报路径不合法: ${relatedBrief}`;
+    }
+    const relatedAbsolutePath = path.join(
+      args.layout.vaultPath,
+      normalizedRelated,
+    );
+    if (!(await pathExists(relatedAbsolutePath))) {
+      return `关联研究简报不存在: ${normalizedRelated}`;
+    }
+    const body = await readFile(relatedAbsolutePath, "utf8");
+    if (body.includes(currentLink)) continue;
+    await writeFile(
+      relatedAbsolutePath,
+      appendRelatedResearchLink(body, currentLink),
+      "utf8",
+    );
+  }
+  return undefined;
+}
+
+function appendRelatedResearchLink(body: string, link: string): string {
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const headingPattern = /^##[ \t]+(?:Related research|相关研究)[ \t]*\r?\n/gim;
+  let heading: RegExpExecArray | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = headingPattern.exec(body)) !== null) heading = match;
+
+  if (!heading || heading.index === undefined) {
+    const trimmed = body.replace(/\s+$/, "");
+    return `${trimmed}${eol}${eol}## Related research${eol}${eol}- ${link}${eol}`;
+  }
+
+  const sectionStart = heading.index + heading[0].length;
+  const nextHeadingPattern = /^##[ \t]+/gm;
+  nextHeadingPattern.lastIndex = sectionStart;
+  const nextHeading = nextHeadingPattern.exec(body);
+  const sectionEnd = nextHeading?.index ?? body.length;
+  const sectionBody = body.slice(sectionStart, sectionEnd).replace(/\s+$/, "");
+  const section = sectionBody.length > 0
+    ? `${sectionBody}${eol}- ${link}${eol}`
+    : `- ${link}${eol}`;
+  return `${body.slice(0, sectionStart)}${section}${body.slice(sectionEnd)}`;
+}
+
+function normalizeStringList(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function toWikilink(relativePath: string): string {
+  return `[[${relativePath.replace(/\\/g, "/").replace(/\.md$/, "")}]]`;
 }
 
 function applyResearchOutcome(

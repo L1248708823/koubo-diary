@@ -13,6 +13,8 @@ export type ResearchTask = {
   task_id: string;
   source_diary?: string;
   source_idea?: string;
+  related_task_ids?: string[];
+  related_briefs?: string[];
   question: string;
   status: ResearchTaskStatus;
   created_at: string;
