@@ -281,8 +281,24 @@ describe("processor acceptance", () => {
     await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
     await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
     await mkdir(path.join(vault.root, vault.layout.ideasDir), { recursive: true });
-    await writeFile(path.join(vault.root, firstIdea), "第一个想法\n", "utf8");
-    await writeFile(path.join(vault.root, secondIdea), "第二个想法\n", "utf8");
+    const ideaFrontmatter = [
+      "---",
+      "captured_at: 2026-07-30T22:00:00+08:00",
+      `source_diary: [[${diary.replace(/\.md$/, "")}]]`,
+      "---",
+      "",
+    ].join("\n");
+    const diaryLink = `[[${diary.replace(/\.md$/, "")}]]`;
+    await writeFile(
+      path.join(vault.root, firstIdea),
+      ideaFrontmatter + `${diaryLink}\n第一个想法\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(vault.root, secondIdea),
+      ideaFrontmatter + `${diaryLink}\n第二个想法\n`,
+      "utf8",
+    );
     await writeReceipt(vault.layout, {
       ok: true,
       round_id: roundId,
@@ -312,6 +328,95 @@ describe("processor acceptance", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.done[0]?.ideas).toEqual([firstIdea, secondIdea]);
+  });
+
+  it("拒绝新想法缺少当前日记回链或完整捕捉时间", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "想法回链契约", {
+      capturedAt: "2026-07-30T22:00:00+08:00",
+    });
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    const idea = `${vault.layout.ideasDir}/2026-07-30-缺少回链.md`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
+    await mkdir(path.dirname(path.join(vault.root, idea)), { recursive: true });
+    await writeFile(
+      path.join(vault.root, idea),
+      "---\ncreated: 2026-07-30\n---\n\n想法正文\n",
+      "utf8",
+    );
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox, status: "done", diary, ideas: [idea] }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [
+        { path: diary, status: "A" },
+        { path: idea, status: "A" },
+      ],
+      roundId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("idea 缺少");
+  });
+
+  it("拒绝只有 frontmatter 回链、正文没有当前日记回链的想法", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "正文回链契约", {
+      capturedAt: "2026-07-30T22:00:00+08:00",
+    });
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    const idea = `${vault.layout.ideasDir}/2026-07-30-正文缺回链.md`;
+    const diaryLink = `[[${diary.replace(/\.md$/, "")}]]`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
+    await mkdir(path.dirname(path.join(vault.root, idea)), { recursive: true });
+    await writeFile(
+      path.join(vault.root, idea),
+      [
+        "---",
+        "captured_at: 2026-07-30T22:00:00+08:00",
+        `source_diary: ${diaryLink}`,
+        "---",
+        "",
+        "想法正文没有来源回链。",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox, status: "done", diary, ideas: [idea] }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [
+        { path: diary, status: "A" },
+        { path: idea, status: "A" },
+      ],
+      roundId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("idea 缺少");
   });
 
   it("拒绝新建想法文件使用错误的捕捉日期", async () => {
@@ -348,6 +453,59 @@ describe("processor acceptance", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain("captured_at 日期");
+  });
+
+  it("拒绝新想法覆盖未列入既有候选的同名文件", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+
+    const inbox = await seedInbox(vault.layout, "想法文件冲突", {
+      capturedAt: "2026-07-30T22:00:00+08:00",
+    });
+    const diary = `${vault.layout.diaryDir}/2026/2026-07/2026-07-30.md`;
+    const idea = `${vault.layout.ideasDir}/2026-07-30-冲突命题.md`;
+    const diaryLink = `[[${diary.replace(/\.md$/, "")}]]`;
+    await mkdir(path.dirname(path.join(vault.root, diary)), { recursive: true });
+    await writeFile(path.join(vault.root, diary), "# 日记\n", "utf8");
+    await mkdir(path.dirname(path.join(vault.root, idea)), { recursive: true });
+    await writeFile(
+      path.join(vault.root, idea),
+      [
+        "---",
+        "captured_at: 2026-07-30T22:00:00+08:00",
+        `source_diary: ${diaryLink}`,
+        "---",
+        "",
+        `${diaryLink}\n已有正文`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeReceipt(vault.layout, {
+      ok: true,
+      round_id: roundId,
+      round_ended_at: "2026-07-30T22:00:00+08:00",
+      processed: [{ inbox, status: "done", diary, ideas: [idea] }],
+      failed: [],
+      quarantine: [],
+    });
+
+    const result = await acceptRound({
+      layout: vault.layout,
+      snapshotInbox: [inbox],
+      changes: [
+        { path: diary, status: "M" },
+        { path: idea, status: "M" },
+      ],
+      existingIdeaPaths: [],
+      roundId,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("idea 文件冲突");
+      expect(result.recoveryPaths).toEqual([idea]);
+    }
   });
 
   it("拒绝内容整理 agent 直接写入研究简报", async () => {

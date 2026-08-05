@@ -152,6 +152,8 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("created_at");
     expect(prompt).toContain("updated_at");
     expect(prompt).toContain("待查登记研究任务");
+    expect(prompt).toContain("source_diary wikilink");
+    expect(prompt).toContain("不得把会被脚本删除的 inbox 当作长期来源");
     expect(prompt).toContain("不得执行任何 git");
     expect(prompt).toContain("不要读取、搜索或枚举任何 SKILL.md");
     expect(prompt).toContain("草稿/");
@@ -227,6 +229,8 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("禁止枚举环境变量");
     expect(prompt).toContain("不得使用 Get-ChildItem Env:");
     expect(prompt).toContain("不得使用 rg --files");
+    expect(prompt).toContain("OutputEncoding = [Console]::OutputEncoding");
+    expect(prompt).toContain("Get-Content 必须带 -Encoding UTF8 -Raw");
     expect(prompt).toContain("不得读取列表之外的收件箱文件");
     expect(prompt).toContain("文件隔离总则：可读文件仅限本轮 pendingInbox");
     expect(prompt).toContain("已知完整路径的 Yan帳/想法/、Yan帳/研究/");

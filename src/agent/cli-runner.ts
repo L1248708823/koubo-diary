@@ -29,7 +29,7 @@ export type CliProcessOptions = {
 
 const DEFAULT_CAPACITY_RETRIES = 2;
 const DEFAULT_CAPACITY_RETRY_DELAY_MS = 3_000;
-export const PROCESSOR_PROMPT_VERSION = "scope-v5-association-ideas-model";
+export const PROCESSOR_PROMPT_VERSION = "scope-v6-association-ideas-source";
 
 /**
  * 在本处理环可见的契约上，两个 CLI 都是“改工作树并写回执”；provider 差异由各自 adapter 封装。
@@ -136,6 +136,7 @@ export function buildProcessorPrompt(
     "- 禁止枚举环境变量；不得使用 Get-ChildItem Env:，不得读取父目录、工具仓、.git、.env、密钥或临时目录。",
     "- 需要判断文件是否存在时，只对已知完整路径使用 Test-Path -LiteralPath；不要通过目录列表寻找路径。",
     "- Windows PowerShell 5.1 下不要使用 Get-Date -AsUTC 或复杂多行内联脚本；时间只使用 captured_at 和 round_id 中已有的时间。",
+    "- Windows PowerShell 5.1 读取 UTF-8 文件时，先在同一命令设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)`；所有 Get-Content 必须带 -Encoding UTF8 -Raw，避免中文正文被系统代码页替换。",
     "- 先逐个读取上方列出的 pendingInbox 文件，再按步骤写回；不要先做任何全库、环境或版本控制检查。",
     "",
     "路径约定：",
@@ -145,7 +146,7 @@ export function buildProcessorPrompt(
     `- 研究目录：${research}/，研究简报由独立研究任务写入；研究任务状态：${processor}/research-tasks.json`,
     `- 收件箱：${inbox}/；状态与回执：${processor}/；同轮草稿：${staging}/`,
     "- 想法只有在内容明确形成可脱离当天回看的观点、假设、创意或方法时创建；模糊念头只留在日记，‘我想’、‘我发现’等词不能单独触发想法。",
-    "- 新建想法文件名必须使用收件项 captured_at 的日期；明确延续已有想法时更新原文件并保留旧正文和旧来源，关系不清楚时不自动合并。",
+    "- 新建想法文件名必须使用收件项 captured_at 的日期；frontmatter 必须包含与收件项完全一致的 captured_at 和当前日记的 source_diary wikilink，正文也必须保留当前日记 wikilink。明确延续已有想法时保留旧正文、旧 captured_at 和旧 source_diary，在新增正文中追加当前完整 captured_at 与当前日记 wikilink；不得把会被脚本删除的 inbox 当作长期来源，关系不清楚时不自动合并。",
     "- 研究任务只有在确实需要外部资料、事实核验、当前信息或方案比较时才创建研究任务；可行性判断等其他证据需求按同一原则处理。已有知识和推理足够时不创建研究任务，问句或疑问词单独出现也不触发；待查登记研究任务时必须保留具体问题。",
     "",
     "硬性约束：",

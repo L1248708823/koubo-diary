@@ -440,6 +440,8 @@ describe("processor orchestrator (seam 1)", () => {
         "2026-07-29-个人工具验证.md",
         [
           "---",
+          "captured_at: 2026-07-29T12:00:00+08:00",
+          `source_diary: [[${diary.replace(/\.md$/, "")}]]`,
           "needs_research: true",
           "research_status: pending",
           "---",
@@ -494,6 +496,347 @@ describe("processor orchestrator (seam 1)", () => {
         (entry) => entry.endsWith(".md"),
       ),
     ).toHaveLength(1);
+  });
+
+  it("最高层处理轮贯通四种内容组合并保持最终状态一致", async () => {
+    const { vault, lock, workspace, captureHead } = await setup();
+    const clock = fixedClock("2026-08-05T12:10:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-05.md`;
+    const existingIdea = await writeIdea(
+      vault.layout,
+      "2026-08-04-既有长期命题.md",
+      [
+        "---",
+        "needs_research: false",
+        "research_status: none",
+        "---",
+        "",
+        "旧正文：保留已有长期命题。",
+        "",
+      ].join("\n"),
+    );
+    const existingResearch = `${vault.layout.researchDir}/2026-08-04-已有研究简报.md`;
+    await writeFile(
+      path.join(vault.root, existingResearch),
+      [
+        "---",
+        "type: research-brief",
+        "research_status: complete",
+        "---",
+        "",
+        "# 已有研究简报",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const inboxes = {
+      pureDiary: await seedInbox(vault.layout, "我想只是今天的一时念头，烦烦烦，这个问题还没想清楚？", {
+        id: "20260805-120001-pure",
+        capturedAt: "2026-08-05T12:04:00+08:00",
+      }),
+      ideaOnly: await seedInbox(vault.layout, "没有关键词，但我已经明确了一个可以长期回看的产品方向。", {
+        id: "20260805-120002-idea",
+        capturedAt: "2026-08-05T12:01:00+08:00",
+      }),
+      researchOnly: await seedInbox(vault.layout, "这个具体事实问题需要外部资料核验。", {
+        id: "20260805-120003-research",
+        capturedAt: "2026-08-05T12:05:00+08:00",
+      }),
+      both: await seedInbox(vault.layout, "这个产品方向值得长期保留，也需要查清最小验证路径。", {
+        id: "20260805-120004-both",
+        capturedAt: "2026-08-05T12:03:00+08:00",
+      }),
+      split: await seedInbox(vault.layout, "这条记录包含两个可以独立理解的长期命题。", {
+        id: "20260805-120005-split",
+        capturedAt: "2026-08-05T12:06:00+08:00",
+      }),
+      continuation: await seedInbox(vault.layout, "这条内容明确延续既有长期命题，并补充了新的实践观察。", {
+        id: "20260805-120006-continuation",
+        capturedAt: "2026-08-05T12:02:00+08:00",
+      }),
+      ambiguous: await seedInbox(vault.layout, "这条新命题与既有想法的关系还不清楚。", {
+        id: "20260805-120007-ambiguous",
+        capturedAt: "2026-08-05T12:07:00+08:00",
+      }),
+    };
+    const ideaOnly = `${vault.layout.ideasDir}/2026-08-05-无关键词长期命题.md`;
+    const bothIdea = `${vault.layout.ideasDir}/2026-08-05-需要研究的产品方向.md`;
+    const splitFirst = `${vault.layout.ideasDir}/2026-08-05-拆分命题一.md`;
+    const splitSecond = `${vault.layout.ideasDir}/2026-08-05-拆分命题二.md`;
+    const ambiguousIdea = `${vault.layout.ideasDir}/2026-08-05-关系不清单独保存.md`;
+    await captureHead();
+
+    let receivedContext: AgentContext | undefined;
+    const agent: AgentRunner = {
+      async run(context) {
+        receivedContext = context;
+        expect(context.pendingInbox).toEqual(Object.values(inboxes).sort());
+        await writeDiary(
+          context.layout,
+          "2026/2026-08/2026-08-05.md",
+          [
+            "# 2026-08-05",
+            "",
+            "- 12:01 没有关键词，但已经明确形成长期命题。",
+            "",
+            "- 12:02 这条内容延续既有长期命题，并补充新的实践观察。",
+            "",
+            "- 12:03 这个产品方向值得长期保留，也需要查清最小验证路径。",
+            "",
+            "- 12:04 我想只是今天的一时念头，烦烦烦，这个问题还没想清楚？",
+            "",
+            "- 12:05 这个具体事实问题需要外部资料核验。",
+            "",
+            "- 12:06 这条记录包含两个可以独立理解的长期命题。",
+            "",
+            "- 12:07 这条新命题与既有想法的关系还不清楚。",
+            "",
+          ].join("\n"),
+        );
+        await writeIdea(
+          context.layout,
+          "2026-08-05-无关键词长期命题.md",
+          [
+            "---",
+            "captured_at: 2026-08-05T12:01:00+08:00",
+            `source_diary: [[${diary.replace(/\.md$/, "")}]]`,
+            "---",
+            "",
+            `无关键词但明确形成的长期命题。来源：[[${diary.replace(/\.md$/, "")}]]`,
+            "",
+          ].join("\n"),
+        );
+        await writeIdea(
+          context.layout,
+          "2026-08-05-需要研究的产品方向.md",
+          [
+            "---",
+            "captured_at: 2026-08-05T12:03:00+08:00",
+            `source_diary: [[${diary.replace(/\.md$/, "")}]]`,
+            "needs_research: true",
+            "research_status: pending",
+            "---",
+            "",
+            `需要研究的产品方向。来源：[[${diary.replace(/\.md$/, "")}]]`,
+            "",
+          ].join("\n"),
+        );
+        await writeIdea(
+          context.layout,
+          "2026-08-05-拆分命题一.md",
+          [
+            "---",
+            "captured_at: 2026-08-05T12:06:00+08:00",
+            `source_diary: [[${diary.replace(/\.md$/, "")}]]`,
+            "---",
+            "",
+            `独立命题一。来源：[[${diary.replace(/\.md$/, "")}]]`,
+            "",
+          ].join("\n"),
+        );
+        await writeIdea(
+          context.layout,
+          "2026-08-05-拆分命题二.md",
+          [
+            "---",
+            "captured_at: 2026-08-05T12:06:00+08:00",
+            `source_diary: [[${diary.replace(/\.md$/, "")}]]`,
+            "---",
+            "",
+            `独立命题二。来源：[[${diary.replace(/\.md$/, "")}]]`,
+            "",
+          ].join("\n"),
+        );
+        await writeIdea(
+          context.layout,
+          "2026-08-05-关系不清单独保存.md",
+          [
+            "---",
+            "captured_at: 2026-08-05T12:07:00+08:00",
+            `source_diary: [[${diary.replace(/\.md$/, "")}]]`,
+            "---",
+            "",
+            `关系不清楚，因此单独保存。来源：[[${diary.replace(/\.md$/, "")}]]`,
+            "",
+          ].join("\n"),
+        );
+        await writeFile(
+          path.join(context.layout.vaultPath, existingIdea),
+          [
+            "---",
+            "captured_at: 2026-08-04T18:00:00+08:00",
+            "source_diary: [[生活/日子一天天过去/2026/2026-08/2026-08-04]]",
+            "needs_research: false",
+            "research_status: none",
+            "---",
+            "",
+            "旧正文：保留已有长期命题。",
+            "",
+            `新增观察：捕捉于 2026-08-05T12:02:00+08:00，来源 [[${diary.replace(/\.md$/, "")}]]`,
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        await writeResearchTasks(context.layout, [
+          createResearchTask({
+            taskId: "e2e-diary-research",
+            sourceDiary: diary,
+            question: "这个具体事实问题需要核验哪些外部资料？",
+            now: clock.now().toISOString(),
+          }),
+          createResearchTask({
+            taskId: "e2e-idea-research",
+            sourceDiary: diary,
+            sourceIdea: bothIdea,
+            question: "这个产品方向的最小验证路径是什么？",
+            now: clock.now().toISOString(),
+          }),
+        ]);
+        await writeReceipt(context.layout, {
+          ok: true,
+          round_id: context.roundId,
+          round_ended_at: clock.now().toISOString(),
+          processed: [
+            { inbox: inboxes.pureDiary, status: "done", diary },
+            { inbox: inboxes.ideaOnly, status: "done", diary, ideas: [ideaOnly] },
+            { inbox: inboxes.researchOnly, status: "done", diary },
+            { inbox: inboxes.both, status: "done", diary, ideas: [bothIdea] },
+            {
+              inbox: inboxes.split,
+              status: "done",
+              diary,
+              ideas: [splitFirst, splitSecond],
+            },
+            {
+              inbox: inboxes.continuation,
+              status: "done",
+              diary,
+              ideas: [existingIdea],
+            },
+            {
+              inbox: inboxes.ambiguous,
+              status: "done",
+              diary,
+              ideas: [ambiguousIdea],
+            },
+          ],
+          failed: [],
+          quarantine: [],
+        });
+      },
+    };
+    const researchTasksSeen: string[] = [];
+    const researchRunner = createResearchBriefRunner({
+      async collect({ task }) {
+        researchTasksSeen.push(task.task_id);
+        return integrationEvidence(task.question);
+      },
+    });
+
+    const result = await runProcessorRound({
+      options: vault.options,
+      workspace,
+      lock,
+      agent,
+      researchRunner,
+      clock,
+    });
+
+    const receipt = JSON.parse(
+      await readFile(
+        path.join(vault.root, vault.layout.processorDir, "last-run.json"),
+        "utf8",
+      ),
+    ) as { processed: { inbox: string; ideas?: string[] }[] };
+    const state = await readFile(
+      path.join(vault.root, vault.layout.processorDir, "STATE.md"),
+      "utf8",
+    );
+    const diaryBody = await readFile(path.join(vault.root, diary), "utf8");
+    const tasks = await readResearchTasks(vault.layout);
+    const existingIdeaBody = await readFile(
+      path.join(vault.root, existingIdea),
+      "utf8",
+    );
+
+    expect(result).toMatchObject({
+      status: "success",
+      agentInvoked: true,
+      progressed: true,
+      researchProcessed: 2,
+      researchPending: 0,
+    });
+    expect(receivedContext?.associationCandidates).toEqual({
+      ideas: [existingIdea],
+      research: [existingResearch],
+    });
+    expect(receipt.processed).toHaveLength(Object.values(inboxes).length);
+    expect(new Set(receipt.processed.map((item) => item.inbox))).toEqual(
+      new Set(Object.values(inboxes)),
+    );
+    expect(
+      receipt.processed.find((item) => item.inbox === inboxes.pureDiary)?.ideas,
+    ).toBeUndefined();
+    expect(
+      receipt.processed.find((item) => item.inbox === inboxes.ideaOnly)?.ideas,
+    ).toEqual([ideaOnly]);
+    expect(
+      receipt.processed.find((item) => item.inbox === inboxes.researchOnly)?.ideas,
+    ).toBeUndefined();
+    expect(
+      receipt.processed.find((item) => item.inbox === inboxes.both)?.ideas,
+    ).toEqual([bothIdea]);
+    expect(
+      receipt.processed.find((item) => item.inbox === inboxes.split)?.ideas,
+    ).toEqual([splitFirst, splitSecond]);
+    expect(
+      receipt.processed.find((item) => item.inbox === inboxes.continuation)?.ideas,
+    ).toEqual([existingIdea]);
+    expect(diaryBody.indexOf("12:01")).toBeLessThan(diaryBody.indexOf("12:02"));
+    expect(diaryBody.indexOf("12:02")).toBeLessThan(diaryBody.indexOf("12:03"));
+    expect(diaryBody.indexOf("12:03")).toBeLessThan(diaryBody.indexOf("12:04"));
+    expect(diaryBody.indexOf("12:04")).toBeLessThan(diaryBody.indexOf("12:05"));
+    expect(diaryBody.indexOf("12:05")).toBeLessThan(diaryBody.indexOf("12:06"));
+    expect(diaryBody.indexOf("12:06")).toBeLessThan(diaryBody.indexOf("12:07"));
+    expect(diaryBody).toContain("烦烦烦");
+    expect(diaryBody).toContain("还没想清楚？");
+    expect(existingIdeaBody).toContain("旧正文：保留已有长期命题。");
+    expect(existingIdeaBody).toContain("新增观察");
+    expect(existingIdeaBody).toContain("2026-08-04T18:00:00+08:00");
+    expect(existingIdeaBody).toContain("2026-08-05T12:02:00+08:00");
+    expect(existingIdeaBody).not.toContain("关系不清楚");
+    for (const idea of [ideaOnly, bothIdea, splitFirst, splitSecond, ambiguousIdea]) {
+      expect(await pathExists(path.join(vault.root, idea))).toBe(true);
+    }
+    expect(tasks).toHaveLength(2);
+    expect(tasks.map((task) => task.task_id)).toEqual([
+      "e2e-diary-research",
+      "e2e-idea-research",
+    ]);
+    expect(tasks.every((task) => task.status === "complete")).toBe(true);
+    expect(researchTasksSeen).toEqual([
+      "e2e-diary-research",
+      "e2e-idea-research",
+    ]);
+    for (const task of tasks) {
+      expect(task.brief).toBeDefined();
+      expect(await pathExists(path.join(vault.root, task.brief!))).toBe(true);
+    }
+    expect(diaryBody).toContain("needs_research: false");
+    expect(diaryBody).toContain("research_status: complete");
+    expect(
+      (await readFile(path.join(vault.root, bothIdea), "utf8")),
+    ).toContain("research_status: complete");
+    expect(state).toContain("- status: success");
+    expect(state).toContain("- phase: research");
+    expect(state).toContain("- inbox_pending: 0");
+    expect(state).toContain("- research_pending: 0");
+    expect(
+      (await readdir(path.join(vault.root, vault.layout.inboxDir))).filter(
+        (entry) => entry.endsWith(".md"),
+      ),
+    ).toHaveLength(0);
   });
 
   it("内容整理验收后同轮运行 pending research，研究失败不回滚内容", async () => {

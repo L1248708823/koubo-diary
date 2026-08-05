@@ -97,6 +97,9 @@ export function isWhitelistedPath(path: string, layout: VaultLayout): boolean {
     if (bare === normalizeDir(layout.researchDir)) {
       return isResearchPath(normalized, layout);
     }
+    if (bare === normalizeDir(layout.diaryDir)) {
+      return isDiaryPath(normalized, layout);
+    }
     return true;
   }
   return false;

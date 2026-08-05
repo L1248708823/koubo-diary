@@ -192,6 +192,8 @@ describe("Codex research runner", () => {
     expect(prompt).toContain("不得执行 git");
     expect(prompt).toContain("本地文件隔离：只能读取当前任务指定的 source_diary");
     expect(prompt).toContain("不得读取收件箱、隔离区、工具仓");
+    expect(prompt).toContain("OutputEncoding = [Console]::OutputEncoding");
+    expect(prompt).toContain("Get-Content 必须带 -Encoding UTF8 -Raw");
   });
 });
 

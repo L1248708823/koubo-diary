@@ -1,6 +1,6 @@
 # Spec: Yan帳 v1.1 日记整理、想法关联与研究判断
 
-Status: ready-for-agent
+Status: ready-for-human
 Feature slug: `yan-account-v11-content-research`
 Sources: `CONTEXT.md`、`docs/ops/post-deployment-handoff-2026-08-04.md`、ADR-0006、ADR-0008 至 ADR-0018、现有处理 skill、现有研究 skill、当前处理编排和测试
 

@@ -318,6 +318,7 @@ export async function runProcessorRound(deps: ProcessorDeps): Promise<RoundResul
       snapshotInbox: snapshotInboxPaths,
       changes,
       roundId,
+      existingIdeaPaths: associationCandidates.ideas,
     });
     logInfo("processor.acceptance", {
       ok: acceptance.ok,

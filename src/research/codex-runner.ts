@@ -196,6 +196,7 @@ export function buildResearchPrompt(
     `brief_path: ${ctx.task.brief ?? "（无既有简报，只能在 RESEARCH_DIR 下一层新建当前任务简报）"}`,
     "本地文件隔离：只能读取当前任务指定的 source_diary、source_idea、brief_path（存在时）、related_briefs（存在时）和 PROCESSOR_DIR/research-tasks.json；只能写入这些指定来源、当前任务研究简报和 research-tasks.json。related_briefs 只用于确认关联，research agent 不得改写其正文，关联回链由处理编排器维护。除此之外不得读取、列出、搜索、测试、创建、修改或删除任何本地文件。",
     "不得读取收件箱、隔离区、工具仓、父目录、.git、.env、密钥、临时目录或其它 vault 文件；不得通过目录枚举寻找来源或简报。",
+    "Windows PowerShell 5.1 读取 UTF-8 文件时，先在同一命令设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)`；所有 Get-Content 必须带 -Encoding UTF8 -Raw，避免中文正文被系统代码页替换。",
     "",
     "研究要求：",
     "1. 来源策略：国外和国际来源优先；搜索时不使用中文网站作为信源，不编造无法核验的来源。",

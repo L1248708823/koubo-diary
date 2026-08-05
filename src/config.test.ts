@@ -45,6 +45,9 @@ describe("config whitelist", () => {
     expect(
       isDiaryPath("生活/日子一天天过去/随便.md", layout),
     ).toBe(false);
+    expect(
+      isWhitelistedPath("生活/日子一天天过去/2026-08-05.md", layout),
+    ).toBe(false);
     expect(isIdeaPath("Yan帳/想法/主题/细节.md", layout)).toBe(false);
     expect(isWhitelistedPath("Yan帳/想法/主题/细节.md", layout)).toBe(false);
     expect(

@@ -123,8 +123,8 @@ function unsafeChangeFailure(
   };
 }
 
-function rejection(reason: string): AcceptanceFail {
-  return { ok: false, reason, recoveryPaths: [] };
+function rejection(reason: string, recoveryPaths: string[] = []): AcceptanceFail {
+  return { ok: false, reason, recoveryPaths };
 }
 
 export async function acceptRound(args: {
@@ -132,8 +132,19 @@ export async function acceptRound(args: {
   snapshotInbox: string[];
   changes: ChangedPath[];
   roundId: string;
+  existingIdeaPaths?: string[];
 }): Promise<AcceptanceResult> {
-  const { layout, snapshotInbox, changes, roundId } = args;
+  const {
+    layout,
+    snapshotInbox,
+    changes,
+    roundId,
+    existingIdeaPaths,
+  } = args;
+  const knownExistingIdeas =
+    existingIdeaPaths === undefined
+      ? undefined
+      : new Set(existingIdeaPaths.map(normalize));
   const recoveryPaths = await findRecoveryPaths(layout, snapshotInbox, changes);
   if (recoveryPaths.length > 0) {
     return unsafeChangeFailure(layout, recoveryPaths);
@@ -205,7 +216,16 @@ export async function acceptRound(args: {
       if (!isIdeaPath(idea, layout)) {
         return rejection(`idea 路径必须是 ${layout.ideasDir}/文件名.md: ${idea}`);
       }
-      if (isNewChangedPath(idea, changes)) {
+      const isNewIdea = isNewChangedPath(idea, changes);
+      if (
+        knownExistingIdeas &&
+        isChangedPath(idea, changes) &&
+        !isNewIdea &&
+        !knownExistingIdeas.has(normalize(idea))
+      ) {
+        return rejection(`idea 文件冲突，不能覆盖未列出的已有文件: ${idea}`, [idea]);
+      }
+      if (isNewIdea) {
         captureDate ??= await readInboxCaptureDate(layout, item.inbox);
         if (
           captureDate === undefined ||
@@ -220,6 +240,14 @@ export async function acceptRound(args: {
       if (!(await pathExists(ideaAbs))) {
         return rejection(`done 声明了 idea 但文件不存在: ${idea}`);
       }
+      const ideaWritebackError = await validateIdeaWriteback({
+        layout,
+        inbox: item.inbox,
+        diary: item.diary,
+        idea,
+        isNewIdea,
+      });
+      if (ideaWritebackError) return rejection(ideaWritebackError, [idea]);
     }
     // inbox must still exist pre-script-delete
     const inboxAbs = path.join(layout.vaultPath, item.inbox);
@@ -372,15 +400,80 @@ function isNewChangedPath(pathValue: string, changes: ChangedPath[]): boolean {
   );
 }
 
+function isChangedPath(pathValue: string, changes: ChangedPath[]): boolean {
+  const normalized = normalize(pathValue);
+  return changes.some(
+    (change) =>
+      change.previousPath === undefined && normalize(change.path) === normalized,
+  );
+}
+
 async function readInboxCaptureDate(
+  layout: VaultLayout,
+  inbox: string,
+): Promise<string | undefined> {
+  const capturedAt = await readInboxCapturedAt(layout, inbox);
+  return capturedAt?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+}
+
+async function readInboxCapturedAt(
   layout: VaultLayout,
   inbox: string,
 ): Promise<string | undefined> {
   const body = await readFile(path.join(layout.vaultPath, inbox), "utf8");
   const frontmatter = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  return frontmatter?.[1]?.match(
-    /^captured_at:\s*(\d{4}-\d{2}-\d{2})/m,
-  )?.[1];
+  return stripYamlValue(
+    frontmatter?.[1]?.match(/^captured_at:\s*(.+?)\s*$/m)?.[1],
+  );
+}
+
+async function validateIdeaWriteback(args: {
+  layout: VaultLayout;
+  inbox: string;
+  diary: string;
+  idea: string;
+  isNewIdea: boolean;
+}): Promise<string | undefined> {
+  const body = await readFile(
+    path.join(args.layout.vaultPath, args.idea),
+    "utf8",
+  );
+  const expectedDiaryLink = toWikilink(args.diary);
+  const frontmatterMatch = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const frontmatter = frontmatterMatch?.[1];
+  const sourceDiary = stripYamlValue(
+    frontmatter?.match(/^source_diary:\s*(.+?)\s*$/m)?.[1],
+  );
+  const ideaBody = frontmatterMatch
+    ? body.slice(frontmatterMatch[0].length)
+    : body;
+  if (!sourceDiary || !ideaBody.includes(expectedDiaryLink)) {
+    return `idea 缺少当前日记回链或 source_diary: ${args.idea}`;
+  }
+
+  const capturedAt = await readInboxCapturedAt(args.layout, args.inbox);
+  const ideaCapturedAt = stripYamlValue(
+    frontmatter?.match(/^captured_at:\s*(.+?)\s*$/m)?.[1],
+  );
+  if (!capturedAt || !ideaCapturedAt) {
+    return `idea 缺少完整 captured_at 或与收件项不一致: ${args.idea}`;
+  }
+  if (args.isNewIdea && (sourceDiary !== expectedDiaryLink || ideaCapturedAt !== capturedAt)) {
+    return `idea 缺少当前日记回链或与收件项一致的 captured_at: ${args.idea}`;
+  }
+  if (!args.isNewIdea && ideaCapturedAt !== capturedAt && !ideaBody.includes(capturedAt)) {
+    return `idea 缺少延续内容的完整 captured_at: ${args.idea}`;
+  }
+  return undefined;
+}
+
+function toWikilink(relativePath: string): string {
+  return `[[${normalize(relativePath).replace(/\.md$/, "")}]]`;
+}
+
+function stripYamlValue(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value.trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
 }
 
 function findOutOfRoundInbox(
