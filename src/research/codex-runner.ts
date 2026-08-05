@@ -4,6 +4,7 @@ import {
   runCliProcess,
   type CliProcessOptions,
 } from "../agent/cli-runner.js";
+import { buildCodexSkillConfig } from "../agent/codex-runner.js";
 import { isResearchPath } from "../config.js";
 import type {
   ResearchRunner,
@@ -67,6 +68,8 @@ export function createCodexResearchRunner(
       const args = buildCodexResearchArgs({
         model,
         reasoningEffort,
+        skill,
+        networkAccess: true,
         extraArgs,
         prompt,
         promptInStdin: true,
@@ -148,6 +151,8 @@ export function createCodexResearchRunner(
 export function buildCodexResearchArgs(args: {
   model: string;
   reasoningEffort: string;
+  skill?: string;
+  networkAccess?: boolean;
   prompt: string;
   promptInStdin?: boolean;
   extraArgs?: string[];
@@ -162,6 +167,12 @@ export function buildCodexResearchArgs(args: {
     args.model,
     "-c",
     `model_reasoning_effort=${JSON.stringify(args.reasoningEffort)}`,
+    ...(args.networkAccess
+      ? ["-c", "sandbox_workspace_write.network_access=true"]
+      : []),
+    ...(args.skill
+      ? ["-c", buildCodexSkillConfig(args.skill)]
+      : []),
     ...(args.extraArgs ?? []),
     ...(args.promptInStdin ? [] : [args.prompt]),
   ];
@@ -177,8 +188,7 @@ export function buildResearchPrompt(
   const sourceDiary = ctx.task.source_diary ?? "（无来源日记）";
   const sourceIdea = ctx.task.source_idea ?? "（无来源想法）";
   return [
-    `你通过 ${provider} 运行。禁止使用全局 skills 和项目级别 skills，只允许使用我让你使用的 skills 或 MCP。`,
-    `请严格执行 research skill「${skill}」，完成一个研究任务。`,
+    `你通过 ${provider} 运行。请使用已配置的 research skill「${skill}」，完成一个研究任务。`,
     "工作目录已是 vault 根目录，只处理当前任务指定的来源和研究简报。",
     `task_id: ${ctx.task.task_id}`,
     `action: ${action}`,
@@ -194,9 +204,7 @@ export function buildResearchPrompt(
     `DIARY_DIR: ${ctx.layout.diaryDir}`,
     `IDEAS_DIR: ${ctx.layout.ideasDir}`,
     `brief_path: ${ctx.task.brief ?? "（无既有简报，只能在 RESEARCH_DIR 下一层新建当前任务简报）"}`,
-    "本地文件隔离：只能读取当前任务指定的 source_diary、source_idea、brief_path（存在时）、related_briefs（存在时）和 PROCESSOR_DIR/research-tasks.json；只能写入这些指定来源、当前任务研究简报和 research-tasks.json。related_briefs 只用于确认关联，research agent 不得改写其正文，关联回链由处理编排器维护。除此之外不得读取、列出、搜索、测试、创建、修改或删除任何本地文件。",
-    "不得读取收件箱、隔离区、工具仓、父目录、.git、.env、密钥、临时目录或其它 vault 文件；不得通过目录枚举寻找来源或简报。",
-    "Windows PowerShell 5.1 读取 UTF-8 文件时，先在同一命令设置 `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)`；所有 Get-Content 必须带 -Encoding UTF8 -Raw，避免中文正文被系统代码页替换。",
+    "可以读取和修改完成当前研究任务所需的 vault 文件；不要修改或删除 inbox，不要执行 git、commit、push 或 pull。",
     "",
     "研究要求：",
     "1. 来源策略：国外和国际来源优先；搜索时不使用中文网站作为信源，不编造无法核验的来源。",
@@ -208,13 +216,7 @@ export function buildResearchPrompt(
     "7. 只有在争议、比较、较高风险或用户明确要求时加入反方观点，并说明它会改变结论的哪一部分。",
     "8. 同一研究问题出现新资料时更新原 task 和 brief；问题目标或范围变化时创建新 task 和 brief，保留 related_task_ids、related_briefs 和双向链接。",
     "",
-    "写回边界：",
-    `1. 研究简报只能直接写入 ${ctx.layout.researchDir}/ 下一层 Markdown。`,
-    `2. 只允许修改指定来源笔记、研究简报和 ${ctx.layout.processorDir}/research-tasks.json。`,
-    `3. 不得修改 ${ctx.layout.inboxDir}，不得访问或写入隔离区、工具仓和密钥。`,
-    "4. 不得执行 git、commit、push、pull 或修改 Git 配置。",
-    "5. 只有研究问题、事实证据、分析、未知点、来源、日期和双向链接都写回并验收后才使用 complete；反方只在问题需要时写入。",
-    `6. 完成后让简报位于 ${ctx.layout.researchDir}/ 下一层，并保留与来源笔记及相关研究的 wikilink 双向回链。`,
+    "写回要求：研究简报位于 RESEARCH_DIR 下一层；完成时保留问题、事实证据、分析、未知点、来源、日期和双向 wikilink。",
   ].join("\n");
 }
 

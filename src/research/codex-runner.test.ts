@@ -86,7 +86,12 @@ describe("Codex research runner", () => {
         "gpt-5.6-luna",
         "-c",
         'model_reasoning_effort="max"',
+        "-c",
+        "sandbox_workspace_write.network_access=true",
       ]),
+    );
+    expect(captured?.args?.some((arg) => arg.includes("skills.config="))).toBe(
+      true,
     );
     const prompt = captured?.stdin ?? "";
     expect(prompt).toContain("research-brief");
@@ -94,7 +99,7 @@ describe("Codex research runner", () => {
     expect(prompt).toContain(context.task.question);
     expect(prompt).toContain(context.layout.researchDir);
     expect(prompt).toContain(context.layout.processorDir);
-    expect(prompt).toContain("不得执行 git");
+    expect(prompt).toContain("不要执行 git");
     expect(await readFile(path.join(vault.root, result.brief!), "utf8")).toContain(
       "research_status: complete",
     );
@@ -178,7 +183,7 @@ describe("Codex research runner", () => {
     const prompt = buildResearchPrompt(context, "research-brief", "Codex research");
 
     expect(prompt.split("\n", 1)[0]).toBe(
-      "你通过 Codex research 运行。禁止使用全局 skills 和项目级别 skills，只允许使用我让你使用的 skills 或 MCP。",
+      "你通过 Codex research 运行。请使用已配置的 research skill「research-brief」，完成一个研究任务。",
     );
     expect(prompt).toContain("action: start");
     expect(prompt).toContain("research_status: running");
@@ -188,12 +193,9 @@ describe("Codex research runner", () => {
     expect(prompt).toContain("不使用中文网站作为信源");
     expect(prompt).toContain("不强制固定章节、来源数量或搜索轮数");
     expect(prompt).toContain("只有在争议、比较、较高风险或用户明确要求时加入反方观点");
-    expect(prompt).toContain("不得修改 _inbox");
-    expect(prompt).toContain("不得执行 git");
-    expect(prompt).toContain("本地文件隔离：只能读取当前任务指定的 source_diary");
-    expect(prompt).toContain("不得读取收件箱、隔离区、工具仓");
-    expect(prompt).toContain("OutputEncoding = [Console]::OutputEncoding");
-    expect(prompt).toContain("Get-Content 必须带 -Encoding UTF8 -Raw");
+    expect(prompt).toContain("不要修改或删除 inbox");
+    expect(prompt).toContain("不要执行 git");
+    expect(prompt).toContain("可以读取和修改完成当前研究任务所需的 vault 文件");
   });
 });
 

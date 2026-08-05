@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createCliAgentRunner } from "./cli-runner.js";
 import type { AgentRunner } from "../types.js";
 
@@ -36,7 +38,13 @@ export function createCodexAgentRunner(
     timeoutMs: options.timeoutMs ?? 10 * 60_000,
     promptTransport: "stdin",
     buildArgs(_prompt, extraArgs) {
-      return buildCodexAgentArgs({ model, reasoningEffort, extraArgs });
+      return buildCodexAgentArgs({
+        model,
+        reasoningEffort,
+        skill,
+        networkAccess: true,
+        extraArgs,
+      });
     },
   });
 }
@@ -44,6 +52,8 @@ export function createCodexAgentRunner(
 export function buildCodexAgentArgs(args: {
   model: string;
   reasoningEffort: string;
+  skill?: string;
+  networkAccess?: boolean;
   extraArgs?: string[];
 }): string[] {
   return [
@@ -56,6 +66,25 @@ export function buildCodexAgentArgs(args: {
     args.model,
     "-c",
     `model_reasoning_effort=${JSON.stringify(args.reasoningEffort)}`,
+    ...(args.networkAccess
+      ? ["-c", "sandbox_workspace_write.network_access=true"]
+      : []),
+    ...(args.skill
+      ? ["-c", buildCodexSkillConfig(args.skill)]
+      : []),
     ...(args.extraArgs ?? []),
   ];
+}
+
+export function buildCodexSkillConfig(skill: string): string {
+  const skillsRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../skills",
+  );
+  const skillPath = path.resolve(skillsRoot, skill, "SKILL.md");
+  const relative = path.relative(skillsRoot, skillPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Codex skill path is outside the skills directory: ${skill}`);
+  }
+  return `skills.config=[{path=${JSON.stringify(skillPath)},enabled=true}]`;
 }
