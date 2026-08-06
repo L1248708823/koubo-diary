@@ -180,7 +180,7 @@ describe("Codex research runner", () => {
     const prompt = buildResearchPrompt(context, "research-brief", "Codex research");
 
     expect(prompt.split("\n", 1)[0]).toBe(
-      "你通过 Codex research 运行。请使用已配置的 research skill「research-brief」，完成一个研究任务。",
+      "你通过 Codex research 运行。这是一次收敛研究任务。",
     );
     expect(prompt).toContain("action: start");
     expect(prompt).toContain("research_status: running");
@@ -189,13 +189,15 @@ describe("Codex research runner", () => {
     expect(prompt).toContain("不要修改或删除 inbox");
     expect(prompt).toContain("不要执行 git");
     expect(prompt).toContain("可以读取和修改完成当前研究任务所需的 vault 文件");
-    expect(prompt).toContain("研究方式、表达反模式和写回契约由 skill 定义，按 skill 执行");
+    expect(prompt).toContain("type: research-brief");
+    expect(prompt).toContain("research_status: complete");
+    expect(prompt).toContain("写回契约");
     expect(prompt).not.toContain("研究要求：");
     expect(prompt).not.toContain("来源策略");
     expect(prompt).not.toContain("反方观点");
   });
 
-  it("research_mode 为 explore 时使用发散 skill，否则使用收敛 skill", async () => {
+  it("research_mode 为 explore 时注入发散研究方式，否则注入收敛研究方式", async () => {
     const { context } = await createResearchContext(vaults);
     const exploreContext: ResearchRunnerContext = {
       ...context,
@@ -206,7 +208,9 @@ describe("Codex research runner", () => {
       "research-explore",
       "Codex research",
     );
-    expect(explorePrompt).toContain("research skill「research-explore」");
+    expect(explorePrompt).toContain("这是一次发散研究任务");
+    expect(explorePrompt).toContain("允许质疑和重构原问题");
+    expect(explorePrompt).toContain("你就像掌握相关领域的朋友一样，大胆发表你的看法");
 
     let exploreStdin: string | undefined;
     await createCodexResearchRunner({
@@ -215,7 +219,7 @@ describe("Codex research runner", () => {
         exploreStdin = input.stdin;
       },
     }).run(exploreContext);
-    expect(exploreStdin).toContain("research skill「research-explore」");
+    expect(exploreStdin).toContain("这是一次发散研究任务");
 
     const convergeContext: ResearchRunnerContext = {
       ...context,
@@ -228,7 +232,8 @@ describe("Codex research runner", () => {
         convergeStdin = input.stdin;
       },
     }).run(convergeContext);
-    expect(convergeStdin).toContain("research skill「research-brief」");
+    expect(convergeStdin).toContain("这是一次收敛研究任务");
+    expect(convergeStdin).not.toContain("大胆发表你的看法");
   });
 });
 

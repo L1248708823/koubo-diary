@@ -191,8 +191,16 @@ export function buildResearchPrompt(
     ctx.action ?? (ctx.task.status === "complete" ? "refresh" : "start");
   const sourceDiary = ctx.task.source_diary ?? "（无来源日记）";
   const sourceIdea = ctx.task.source_idea ?? "（无来源想法）";
+  const explore = skill === "research-explore";
+  const modeIntro = explore ? "这是一次发散研究任务。" : "这是一次收敛研究任务。";
+  const modeBody = explore
+    ? "研究方式：允许质疑和重构原问题，主动寻找被忽略的角度、盲区和假设；产出新问题与产出答案同等有效，不必为凑答案提前收敛。重构的问题写进简报正文。"
+    : "研究方式：以验证和回答主问题为主，事实与分析分开，必要时给出诚实判断。";
+  const expression = explore
+    ? "表达：表达观点用“我”，自然、直接、容易读懂，可以有真实判断和态度。你就像掌握相关领域的朋友一样，大胆发表你的看法。"
+    : "表达：表达观点用“我”，自然、直接、容易读懂，可以有真实判断和态度。";
   return [
-    `你通过 ${provider} 运行。请使用已配置的 research skill「${skill}」，完成一个研究任务。`,
+    `你通过 ${provider} 运行。${modeIntro}`,
     "工作目录已是 vault 根目录，只处理当前任务指定的来源和研究简报。",
     `task_id: ${ctx.task.task_id}`,
     `action: ${action}`,
@@ -209,7 +217,25 @@ export function buildResearchPrompt(
     `IDEAS_DIR: ${ctx.layout.ideasDir}`,
     `brief_path: ${ctx.task.brief ?? "（无既有简报，只能在 RESEARCH_DIR 下一层新建当前任务简报）"}`,
     "可以读取和修改完成当前研究任务所需的 vault 文件；不要修改或删除 inbox，不要执行 git、commit、push 或 pull。",
-    "研究方式、表达反模式和写回契约由 skill 定义，按 skill 执行。",
+    "",
+    modeBody,
+    "",
+    "事实边界：外部事实、数据、论文或原始资料支撑的结论需要可核验来源，无法核验时明确写未知，不补写 URL、作者、标题、日期或数据。搜索时不使用中文网站作为信源。",
+    "",
+    expression,
+    "",
+    "写回契约：简报位于 RESEARCH_DIR 下一层，一条任务一个 Markdown 文件。文件开头是 frontmatter YAML 块：",
+    "---",
+    "type: research-brief",
+    "task_id: <任务里的 task_id>",
+    "research_status: complete",
+    "created: YYYY-MM-DD",
+    "updated: YYYY-MM-DD",
+    'question: "<任务原始问题>"',
+    'source_diary: "[[来源日记路径无 .md]]"',
+    'source_idea: "[[来源想法路径无 .md]]"',
+    "---",
+    "无对应来源时省略对应字段。research_status 完成时写 complete，未完成写 partial 或 blocked。简报正文包含来源 wikilink；完成时把来源笔记的 needs_research 改为 false、research_status 改为 complete、清除 research_error，未完成保留 needs_research: true 并记录 research_error。",
   ].join("\n");
 }
 

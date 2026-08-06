@@ -154,6 +154,9 @@ describe("CLI agent Windows 参数", () => {
     expect(prompt).toContain("待查登记研究任务");
     expect(prompt).toContain("source_diary wikilink");
     expect(prompt).toContain("不得把会被脚本删除的 inbox 当作长期来源");
+    expect(prompt).toContain("日记正文保留用户原话的口语、情绪、疑问和语气");
+    expect(prompt).toContain("内容层极度保守");
+    expect(prompt).toContain("不得把口语改书面");
     expect(prompt).toContain("不得执行任何 git");
     expect(prompt).toContain("不要读取、搜索或枚举任何 SKILL.md");
     expect(prompt).toContain("草稿/");
