@@ -86,6 +86,55 @@ describe("research task state", () => {
     await expect(countRunnableResearchTasks(vault.layout)).resolves.toBe(4);
   });
 
+  it("创建任务时支持 research_mode，解析时保留非法值报错", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const now = "2026-07-31T10:00:00.000Z";
+    const explore = createResearchTask({
+      taskId: "task-explore",
+      sourceDiary: "生活/日子一天天过去/2026/2026-08/2026-08-01.md",
+      question: "发散任务沿用原问题",
+      researchMode: "explore",
+      now,
+    });
+    const converge = createResearchTask({
+      taskId: "task-converge",
+      sourceDiary: "生活/日子一天天过去/2026/2026-08/2026-08-01.md",
+      question: "收敛任务",
+      now,
+    });
+    expect(explore.research_mode).toBe("explore");
+    expect(converge.research_mode).toBeUndefined();
+
+    await writeResearchTasks(vault.layout, [explore, converge]);
+    const tasks = await readResearchTasks(vault.layout);
+    expect(tasks.find((task) => task.task_id === "task-explore")?.research_mode).toBe(
+      "explore",
+    );
+    expect(
+      tasks.find((task) => task.task_id === "task-converge")?.research_mode,
+    ).toBeUndefined();
+
+    const taskFile = path.join(
+      vault.root,
+      vault.layout.processorDir,
+      "research-tasks.json",
+    );
+    await writeFile(
+      taskFile,
+      JSON.stringify([
+        {
+          ...explore,
+          research_mode: "random",
+        },
+      ]),
+      "utf8",
+    );
+    await expect(readResearchTasks(vault.layout)).rejects.toThrow(
+      "research_mode 格式不合法",
+    );
+  });
+
   it("兼容旧版缺少时间字段的研究任务，并补齐时间", async () => {
     const vault = await createTempVault();
     vaults.push(vault);

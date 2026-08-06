@@ -289,6 +289,9 @@ export async function validateResearchWriteback(args: {
   return undefined;
 }
 
+const NOT_APPLICABLE_LINE =
+  /^(本(?:节|部分|小节)?不适用|本(?:节|部分|小节)?不涉及|not applicable|n\/a)(?:[:：、。.，,\s]|$)/i;
+
 function validateFlexibleBriefBody(body: string): string | undefined {
   const content = body.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
   if (!/^#\s+\S/m.test(content)) {
@@ -296,48 +299,12 @@ function validateFlexibleBriefBody(body: string): string | undefined {
   }
 
   const sections = parseMarkdownSections(content);
-  const evidenceSections = sections.filter((section) =>
-    /(事实|证据|发现|结果|观察|资料|evidence|findings?|results?|observations?)/i.test(
-      section.heading,
-    ),
+  const substantiveSections = sections.filter(
+    (section) =>
+      hasSectionContent([section]) && !isExplicitlyNotApplicable([section]),
   );
-  if (!hasSectionContent(evidenceSections)) {
-    return "研究简报缺少事实或证据内容";
-  }
-
-  const analysisSections = sections.filter((section) =>
-    /(分析|推断|判断|结论|建议|推理|analysis|inference|reasoning|assessment|interpretation|recommendation)/i.test(
-      section.heading,
-    ),
-  );
-  if (!hasSectionContent(analysisSections)) {
-    return "研究简报缺少推断或分析内容";
-  }
-
-  const unknownSections = sections.filter((section) =>
-    /(未知|限制|不确定|待核实|开放问题|unknown|limitation|uncertain|caveat|open question)/i.test(
-      section.heading,
-    ),
-  );
-  if (!hasSectionContent(unknownSections)) {
-    return "研究简报缺少未知点或限制内容";
-  }
-
-  const methodSections = sections.filter((section) =>
-    /(方法|范围|研究过程|检索策略|method|scope|process|methodology)/i.test(
-      section.heading,
-    ),
-  );
-  if (!hasSectionContent(methodSections)) {
-    return "研究简报缺少研究方法或范围内容";
-  }
-  const methodContent = methodSections.map((section) => section.body).join("\n");
-  if (
-    !/(停止|停止依据|截止|预算|无法继续|stopping|stop|budget|no further|inaccessible)/i.test(
-      methodContent,
-    )
-  ) {
-    return "研究简报缺少停止依据";
+  if (substantiveSections.length < 2) {
+    return "研究简报缺少实质内容";
   }
 
   const sourceSections = sections.filter((section) =>
@@ -345,10 +312,11 @@ function validateFlexibleBriefBody(body: string): string | undefined {
       section.heading,
     ),
   );
+  if (isExplicitlyNotApplicable(sourceSections)) return undefined;
+  const sourceContent = sourceSections.map((section) => section.body).join("\n");
   if (!hasSectionContent(sourceSections)) {
     return "研究简报缺少来源内容";
   }
-  const sourceContent = sourceSections.map((section) => section.body).join("\n");
   if (
     !/(https?:\/\/\S+|无法核验|不可核验|未找到可靠来源|source unavailable|unverifiable)/i.test(
       sourceContent,
@@ -357,6 +325,15 @@ function validateFlexibleBriefBody(body: string): string | undefined {
     return "研究简报缺少可核验来源或不可核验说明";
   }
   return undefined;
+}
+
+/** 章节内容为显式的不适用声明时放行，避免模型为凑格式而填充。 */
+function isExplicitlyNotApplicable(sections: MarkdownSection[]): boolean {
+  return sections.some((section) =>
+    section.body
+      .split(/\r?\n/)
+      .some((line) => NOT_APPLICABLE_LINE.test(line.trim())),
+  );
 }
 
 type MarkdownSection = {

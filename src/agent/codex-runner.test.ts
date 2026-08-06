@@ -98,8 +98,6 @@ describe("Codex agent runner", () => {
         'model_reasoning_effort="max"',
         "-c",
         "sandbox_workspace_write.network_access=true",
-        "-c",
-        expect.stringContaining("skills.config="),
       ]);
       expect(captured.input).toContain('"round_id": "round-codex-test"');
       expect(captured.input).toContain("_inbox/20260803-test.md");

@@ -4,11 +4,11 @@ import {
   runCliProcess,
   type CliProcessOptions,
 } from "../agent/cli-runner.js";
-import { buildCodexSkillConfig } from "../agent/codex-runner.js";
 import { isResearchPath } from "../config.js";
 import type {
   ResearchRunner,
   ResearchRunnerContext,
+  ResearchTask,
 } from "../types.js";
 import {
   findResearchBriefForTask,
@@ -44,7 +44,7 @@ export function createCodexResearchRunner(
     process.env.RESEARCH_BIN ??
     process.env.CODEX_BIN ??
     (process.platform === "win32" ? "codex.cmd" : "codex");
-  const skill = options.skill ?? process.env.RESEARCH_SKILL ?? "research-brief";
+  const configuredSkill = options.skill ?? process.env.RESEARCH_SKILL;
   const model = options.model ?? process.env.RESEARCH_MODEL ?? "gpt-5.6-luna";
   const reasoningEffort =
     options.reasoningEffort ??
@@ -64,11 +64,11 @@ export function createCodexResearchRunner(
 
   return {
     async run(ctx) {
+      const skill = resolveResearchSkill(configuredSkill, ctx.task.research_mode);
       const prompt = buildResearchPrompt(ctx, skill, "Codex research");
       const args = buildCodexResearchArgs({
         model,
         reasoningEffort,
-        skill,
         networkAccess: true,
         extraArgs,
         prompt,
@@ -151,7 +151,6 @@ export function createCodexResearchRunner(
 export function buildCodexResearchArgs(args: {
   model: string;
   reasoningEffort: string;
-  skill?: string;
   networkAccess?: boolean;
   prompt: string;
   promptInStdin?: boolean;
@@ -170,12 +169,17 @@ export function buildCodexResearchArgs(args: {
     ...(args.networkAccess
       ? ["-c", "sandbox_workspace_write.network_access=true"]
       : []),
-    ...(args.skill
-      ? ["-c", buildCodexSkillConfig(args.skill)]
-      : []),
     ...(args.extraArgs ?? []),
     ...(args.promptInStdin ? [] : [args.prompt]),
   ];
+}
+
+function resolveResearchSkill(
+  configured: string | undefined,
+  mode: ResearchTask["research_mode"],
+): string {
+  if (configured) return configured;
+  return mode === "explore" ? "research-explore" : "research-brief";
 }
 
 export function buildResearchPrompt(
@@ -205,18 +209,7 @@ export function buildResearchPrompt(
     `IDEAS_DIR: ${ctx.layout.ideasDir}`,
     `brief_path: ${ctx.task.brief ?? "（无既有简报，只能在 RESEARCH_DIR 下一层新建当前任务简报）"}`,
     "可以读取和修改完成当前研究任务所需的 vault 文件；不要修改或删除 inbox，不要执行 git、commit、push 或 pull。",
-    "",
-    "研究要求：",
-    "1. 来源策略：国外和国际来源优先；搜索时不使用中文网站作为信源，不编造无法核验的来源。",
-    "2. 记录事实、推断、建议、未知点、证据边界、适用范围和停止依据。",
-    "3. 不编造 URL、作者、标题、日期、数据或无法核验的来源；无法核验的内容明确写未知。",
-    "4. 健康、法律、财务或安全主题不能写成个体化诊断或确定性指令。",
-    "5. 研究结构根据问题决定，不强制固定章节、来源数量或搜索轮数；事实、推断、建议和未知点需要清楚区分。",
-    "6. 需要方案比较时优先提供至少三种真实可行方案，并说明适用条件、优点、缺点、实施代价、复杂度、风险、证据情况和推荐理由；不足三种时说明原因。",
-    "7. 只有在争议、比较、较高风险或用户明确要求时加入反方观点，并说明它会改变结论的哪一部分。",
-    "8. 同一研究问题出现新资料时更新原 task 和 brief；问题目标或范围变化时创建新 task 和 brief，保留 related_task_ids、related_briefs 和双向链接。",
-    "",
-    "写回要求：研究简报位于 RESEARCH_DIR 下一层；完成时保留问题、事实证据、分析、未知点、来源、日期和双向 wikilink。",
+    "研究方式、表达反模式和写回契约由 skill 定义，按 skill 执行。",
   ].join("\n");
 }
 

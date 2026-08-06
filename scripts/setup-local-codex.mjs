@@ -1,4 +1,4 @@
-import { copyFile, mkdir, access, writeFile } from "node:fs/promises";
+import { cp, mkdir, access, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 function requiredEnv(name) {
@@ -41,20 +41,24 @@ const directories = [
   "Yan帳/想法",
   "Yan帳/研究",
   "生活/日子一天天过去",
-  ".claude/skills/处理收件箱",
 ];
 for (const directory of directories) {
   await mkdir(path.join(vaultPath, directory), { recursive: true });
 }
 
-await copyFile(
-  path.join(repoRoot, "skills/处理收件箱/SKILL.md"),
-  path.join(vaultPath, ".claude/skills/处理收件箱/SKILL.md"),
-);
+const codexSkillsDir = path.join(vaultPath, ".codex/skills");
+await mkdir(codexSkillsDir, { recursive: true });
+for (const skillName of ["处理收件箱", "research-brief", "research-explore"]) {
+  await cp(
+    path.join(repoRoot, "skills", skillName),
+    path.join(codexSkillsDir, skillName),
+    { recursive: true },
+  );
+}
 
 console.log(`本地配置已更新：${localConfigPath}`);
 if (vaultExists) {
-  console.log("临时 vault 已存在，已补齐目录并同步 skill 基线，保留现有测试内容。");
+  console.log("临时 vault 已存在，已补齐目录，保留现有测试内容。");
 } else {
   console.log(`本地测试 vault 已创建：${vaultPath}`);
 }

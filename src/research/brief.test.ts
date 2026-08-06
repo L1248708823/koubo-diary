@@ -727,6 +727,169 @@ describe("research brief write-back", () => {
       "research_status: partial",
     );
   });
+
+  it("思辨型简报显式声明本节不适用时通过验收", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary);
+    const brief = `${vault.layout.researchDir}/思辨笔记.md`;
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "task-speculative",
+        sourceDiary: diary,
+        question: "什么是好的对话？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+
+    const result = await runResearchStage({
+      layout: vault.layout,
+      maxResearchPerRound: 5,
+      runner: {
+        async run({ layout, task }) {
+          await mkdir(path.join(layout.vaultPath, layout.researchDir), {
+            recursive: true,
+          });
+          await writeFile(
+            path.join(layout.vaultPath, brief),
+            [
+              "---",
+              "type: research-brief",
+              "task_id: task-speculative",
+              "research_status: complete",
+              "created: 2026-08-01",
+              "updated: 2026-08-01",
+              'question: "什么是好的对话？"',
+              `source_diary: \"[[${diary.replace(/\.md$/, "")}]]\"`,
+              "---",
+              "",
+              "# 什么是好的对话",
+              "",
+              "## Reframed question",
+              "",
+              "原问题看似在问对话技巧，更根本的问题是对话的边界条件。",
+              "",
+              "## Evidence and facts",
+              "",
+              "本节不适用：本问题为思辨性质，无外部事实证据，依据为论证与推理。",
+              "",
+              "## Analysis",
+              "",
+              "好的对话让参与者原有的问题框架被改写，反例推演比事实列举更能检验这个判断。",
+              "",
+              "## Unknowns and limitations",
+              "",
+              "好对话是否依赖共同语言，尚无定论。",
+              "",
+              "## Scope and method",
+              "",
+              "本节不适用：未检索外部资料，方法为概念分析与反例推演。",
+              "",
+              "## Sources",
+              "",
+              "本节不适用：无外部来源，该问题依赖推理而非可核验的外部资料。",
+              "",
+              `- [[${diary.replace(/\.md$/, "")}]]`,
+              "",
+            ].join("\n"),
+            "utf8",
+          );
+          await writeFile(
+            path.join(layout.vaultPath, diary),
+            [
+              "---",
+              "needs_research: false",
+              "research_status: complete",
+              "---",
+              "",
+              "三大项视频分析需要先验证技术边界。",
+              "",
+              "## Research links",
+              `- [[${brief.replace(/\.md$/, "")}]]`,
+              "",
+            ].join("\n"),
+            "utf8",
+          );
+          return { status: "complete" as const, brief };
+        },
+      },
+      clock,
+    });
+
+    const savedTask = (await readResearchTasks(vault.layout))[0]!;
+    expect(result.processed).toBe(1);
+    expect(savedTask.status).toBe("complete");
+    expect(savedTask.brief).toBe(brief);
+  });
+
+  it("全部章节声明不适用时拒绝空壳简报", async () => {
+    const vault = await createTempVault();
+    vaults.push(vault);
+    const clock = fixedClock("2026-08-01T12:00:00+08:00");
+    const diary = `${vault.layout.diaryDir}/2026/2026-08/2026-08-01.md`;
+    await writeSourceNote(vault, diary);
+    const brief = `${vault.layout.researchDir}/空壳简报.md`;
+    await writeResearchTasks(vault.layout, [
+      createResearchTask({
+        taskId: "task-shell",
+        sourceDiary: diary,
+        question: "空壳简报是否被拒绝？",
+        now: clock.now().toISOString(),
+      }),
+    ]);
+
+    const result = await runResearchStage({
+      layout: vault.layout,
+      maxResearchPerRound: 5,
+      runner: {
+        async run({ layout, task }) {
+          await mkdir(path.join(layout.vaultPath, layout.researchDir), {
+            recursive: true,
+          });
+          await writeFile(
+            path.join(layout.vaultPath, brief),
+            [
+              "---",
+              "type: research-brief",
+              "task_id: task-shell",
+              "research_status: complete",
+              "created: 2026-08-01",
+              "updated: 2026-08-01",
+              'question: "空壳简报是否被拒绝？"',
+              `source_diary: \"[[${diary.replace(/\.md$/, "")}]]\"`,
+              "---",
+              "",
+              "# 空壳简报",
+              "",
+              "## Evidence and facts",
+              "",
+              "本节不适用。",
+              "",
+              "## Analysis",
+              "",
+              "本节不适用。",
+              "",
+              `- [[${diary.replace(/\.md$/, "")}]]`,
+              "",
+            ].join("\n"),
+            "utf8",
+          );
+          return { status: "complete" as const, brief };
+        },
+      },
+      clock,
+    });
+
+    const savedTask = (await readResearchTasks(vault.layout))[0]!;
+    expect(result.processed).toBe(1);
+    expect(savedTask.status).toBe("partial");
+    expect(savedTask.last_error).toContain("研究简报缺少实质内容");
+    expect(
+      await readFile(path.join(vault.root, brief), "utf8"),
+    ).toContain("research_status: partial");
+  });
 });
 
 async function writeSourceNote(

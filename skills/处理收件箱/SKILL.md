@@ -72,6 +72,8 @@ Idea 为是时创建一个或多个顶层想法，一条想法一个文件；文
 
 没有独立 Idea 的 Research candidate 关联源日记，并在 `PROCESSOR_DIR/research-tasks.json` 保存 `task_id`、来源、问题、状态、`created_at` 和 `updated_at`。时间使用编排器提供的 `round_id` 时间；`needs_research` 只作候选信号，任务状态以 `research_status` 为准。
 
+问题复杂、开放或值得多角度看时，登记两个子任务并互相挂在 `related_task_ids` 里：一个收敛任务不写 `research_mode`（默认 converge），一个发散任务写 `research_mode: "explore"`，发散任务的问题沿用原问题，不另造问题。简单问题只登记一个任务，不拆。
+
 Completion criterion：每个 `ideas` 路径合法、文件真实存在并与日记互链；每个 Research candidate 有唯一 task record；本步骤没有写入研究简报。
 
 ### 5. Receipt

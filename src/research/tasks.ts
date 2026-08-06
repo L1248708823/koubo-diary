@@ -11,6 +11,7 @@ export function createResearchTask(input: {
   relatedTaskIds?: string[];
   relatedBriefs?: string[];
   question: string;
+  researchMode?: ResearchTask["research_mode"];
   now: string;
 }): ResearchTask {
   const taskId = input.taskId.trim();
@@ -28,6 +29,7 @@ export function createResearchTask(input: {
     created_at: input.now,
     updated_at: input.now,
   };
+  if (input.researchMode !== undefined) task.research_mode = input.researchMode;
   if (input.sourceDiary !== undefined) task.source_diary = input.sourceDiary;
   if (input.sourceIdea !== undefined) task.source_idea = input.sourceIdea;
   const relatedTaskIds = normalizeStringList(input.relatedTaskIds);
@@ -208,6 +210,8 @@ function parseResearchTask(raw: unknown, fallbackTimestamp: string): ResearchTas
     created_at: createdAt,
     updated_at: updatedAt,
   };
+  const researchMode = parseResearchMode(item.research_mode);
+  if (researchMode !== undefined) task.research_mode = researchMode;
   const sourceDiary = parseOptionalString(item.source_diary, "source_diary");
   const sourceIdea = parseOptionalString(item.source_idea, "source_idea");
   if (sourceDiary !== undefined) task.source_diary = sourceDiary;
@@ -249,6 +253,16 @@ function isResearchTaskStatus(value: unknown): value is ResearchTask["status"] {
     value === "blocked" ||
     value === "complete"
   );
+}
+
+function parseResearchMode(
+  value: unknown,
+): ResearchTask["research_mode"] | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "converge" && value !== "explore") {
+    throw new Error("研究任务 research_mode 格式不合法");
+  }
+  return value;
 }
 
 function isMissingFile(error: unknown): boolean {

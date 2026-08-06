@@ -1,4 +1,30 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
+
 export type LogFields = Record<string, unknown>;
+
+const logFilePath = resolveLogFilePath();
+
+function resolveLogFilePath(): string | undefined {
+  const configured = process.env.LOG_FILE;
+  if (!configured) return undefined;
+  const resolved = path.resolve(configured);
+  try {
+    mkdirSync(path.dirname(resolved), { recursive: true });
+  } catch {
+    return undefined;
+  }
+  return resolved;
+}
+
+function writeToFile(line: string): void {
+  if (logFilePath === undefined) return;
+  try {
+    appendFileSync(logFilePath, `${line}\n`, "utf8");
+  } catch {
+    // 日志文件写入失败不影响主流程。
+  }
+}
 
 export function logInfo(event: string, fields: LogFields = {}): void {
   writeLog("INFO", event, fields);
@@ -22,6 +48,7 @@ function writeLog(level: "INFO" | "ERROR", event: string, fields: LogFields): vo
   } else {
     console.log(line);
   }
+  writeToFile(line);
 }
 
 export function logAgentOutput(
@@ -45,5 +72,6 @@ export function logAgentOutput(
     const rendered = `[koubo] ${JSON.stringify(payload)}`;
     if (channel === "stderr") console.error(rendered);
     else console.log(rendered);
+    writeToFile(rendered);
   }
 }

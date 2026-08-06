@@ -17,6 +17,8 @@ export type ResearchTask = {
   related_briefs?: string[];
   question: string;
   status: ResearchTaskStatus;
+  /** 收敛或发散探索。默认 converge，发散任务在登记时显式指定。 */
+  research_mode?: "converge" | "explore";
   created_at: string;
   updated_at: string;
   brief?: string;

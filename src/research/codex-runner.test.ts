@@ -90,9 +90,6 @@ describe("Codex research runner", () => {
         "sandbox_workspace_write.network_access=true",
       ]),
     );
-    expect(captured?.args?.some((arg) => arg.includes("skills.config="))).toBe(
-      true,
-    );
     const prompt = captured?.stdin ?? "";
     expect(prompt).toContain("research-brief");
     expect(prompt).toContain(context.task.task_id);
@@ -178,7 +175,7 @@ describe("Codex research runner", () => {
     ]);
   });
 
-  it("研究 prompt 携带来源、状态和边界", async () => {
+  it("研究 prompt 携带来源、状态和边界，行为规则交给 skill", async () => {
     const { context } = await createResearchContext(vaults);
     const prompt = buildResearchPrompt(context, "research-brief", "Codex research");
 
@@ -189,13 +186,49 @@ describe("Codex research runner", () => {
     expect(prompt).toContain("research_status: running");
     expect(prompt).toContain(context.layout.diaryDir);
     expect(prompt).toContain(context.task.source_diary!);
-    expect(prompt).toContain("国外和国际来源优先");
-    expect(prompt).toContain("不使用中文网站作为信源");
-    expect(prompt).toContain("不强制固定章节、来源数量或搜索轮数");
-    expect(prompt).toContain("只有在争议、比较、较高风险或用户明确要求时加入反方观点");
     expect(prompt).toContain("不要修改或删除 inbox");
     expect(prompt).toContain("不要执行 git");
     expect(prompt).toContain("可以读取和修改完成当前研究任务所需的 vault 文件");
+    expect(prompt).toContain("研究方式、表达反模式和写回契约由 skill 定义，按 skill 执行");
+    expect(prompt).not.toContain("研究要求：");
+    expect(prompt).not.toContain("来源策略");
+    expect(prompt).not.toContain("反方观点");
+  });
+
+  it("research_mode 为 explore 时使用发散 skill，否则使用收敛 skill", async () => {
+    const { context } = await createResearchContext(vaults);
+    const exploreContext: ResearchRunnerContext = {
+      ...context,
+      task: { ...context.task, research_mode: "explore" },
+    };
+    const explorePrompt = buildResearchPrompt(
+      exploreContext,
+      "research-explore",
+      "Codex research",
+    );
+    expect(explorePrompt).toContain("research skill「research-explore」");
+
+    let exploreStdin: string | undefined;
+    await createCodexResearchRunner({
+      bin: "codex-test.cmd",
+      runCommand: async (input) => {
+        exploreStdin = input.stdin;
+      },
+    }).run(exploreContext);
+    expect(exploreStdin).toContain("research skill「research-explore」");
+
+    const convergeContext: ResearchRunnerContext = {
+      ...context,
+      task: { ...context.task, research_mode: undefined },
+    };
+    let convergeStdin: string | undefined;
+    await createCodexResearchRunner({
+      bin: "codex-test.cmd",
+      runCommand: async (input) => {
+        convergeStdin = input.stdin;
+      },
+    }).run(convergeContext);
+    expect(convergeStdin).toContain("research skill「research-brief」");
   });
 });
 

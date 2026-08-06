@@ -1,5 +1,3 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createCliAgentRunner } from "./cli-runner.js";
 import type { AgentRunner } from "../types.js";
 
@@ -41,7 +39,6 @@ export function createCodexAgentRunner(
       return buildCodexAgentArgs({
         model,
         reasoningEffort,
-        skill,
         networkAccess: true,
         extraArgs,
       });
@@ -52,7 +49,6 @@ export function createCodexAgentRunner(
 export function buildCodexAgentArgs(args: {
   model: string;
   reasoningEffort: string;
-  skill?: string;
   networkAccess?: boolean;
   extraArgs?: string[];
 }): string[] {
@@ -69,22 +65,6 @@ export function buildCodexAgentArgs(args: {
     ...(args.networkAccess
       ? ["-c", "sandbox_workspace_write.network_access=true"]
       : []),
-    ...(args.skill
-      ? ["-c", buildCodexSkillConfig(args.skill)]
-      : []),
     ...(args.extraArgs ?? []),
   ];
-}
-
-export function buildCodexSkillConfig(skill: string): string {
-  const skillsRoot = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../../skills",
-  );
-  const skillPath = path.resolve(skillsRoot, skill, "SKILL.md");
-  const relative = path.relative(skillsRoot, skillPath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error(`Codex skill path is outside the skills directory: ${skill}`);
-  }
-  return `skills.config=[{path=${JSON.stringify(skillPath)},enabled=true}]`;
 }

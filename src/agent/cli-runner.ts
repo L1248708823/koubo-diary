@@ -116,7 +116,7 @@ export function buildProcessorPrompt(
     "}",
   ].join("\n");
   return [
-    `你通过 ${provider} 运行。禁止使用全局 skills 和项目级别 skills，只允许使用我让你使用的 skills 或 MCP。`,
+    `你通过 ${provider} 运行。只使用工作目录 .codex/skills 中本提示指定的 skill「${skill}」，不要使用其它技能或 MCP。`,
     `请按本提示中的「${skill}」处理契约处理本轮收件箱；本提示已经包含完整规则。`,
     "不要读取、搜索或枚举任何 SKILL.md，也不要寻找其它说明文件。",
     "工作目录已是 vault 根目录。",
@@ -239,6 +239,11 @@ async function runCliProcessOnce(opts: CliProcessOptions): Promise<void> {
       shell: useWindowsShell,
       argTransport: useWindowsShell ? "cmd-single-line" : "native",
       stdinTransport: opts.stdin !== undefined,
+    });
+    logInfo("agent.invocation", {
+      provider: opts.provider,
+      args: opts.args,
+      stdin: opts.stdin ?? "",
     });
     const outputChunks: Buffer[] = [];
     const errorChunks: Buffer[] = [];

@@ -144,7 +144,7 @@ describe("CLI agent Windows 参数", () => {
     );
 
     expect(prompt.split("\n", 1)[0]).toBe(
-      "你通过 Codex 运行。禁止使用全局 skills 和项目级别 skills，只允许使用我让你使用的 skills 或 MCP。",
+      "你通过 Codex 运行。只使用工作目录 .codex/skills 中本提示指定的 skill「处理收件箱」，不要使用其它技能或 MCP。",
     );
     expect(prompt).toContain("收件/");
     expect(prompt).toContain("处理状态/last-run.json");
